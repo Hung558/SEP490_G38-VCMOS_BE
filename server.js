@@ -2,24 +2,28 @@
 require('dotenv').config();
 
 const express = require('express');
-// 2. Import hàm connectDB từ đường dẫn tệp db.js của bạn (chỉnh lại đường dẫn nếu cần)
+const cors = require('cors');
 const connectDB = require('./src/config/db');
+const authRoutes = require('./src/routes/auth.routes');
 
 const app = express();
 
-// 3. Thực hiện kết nối tới MongoDB Atlas
-connectDB();
-
+// Cho phép FE gọi API
+app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000' }));
 // Middleware để đọc dữ liệu JSON từ body request
 app.use(express.json());
 
-app.get('/', async (req, res) => {
-    try {
-        res.send({ message: 'Welcome to Practical Exam!' });
-    } catch (error) {
-        res.status(500).send({ error: error.message });
-    }
+app.get('/', (req, res) => {
+    res.send({ message: 'VCMOS API is running' });
 });
 
-const PORT = process.env.PORT || 9999;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.use('/api/auth', authRoutes);
+
+// Chỉ kết nối DB + mở port khi chạy trực tiếp (npm start); test sẽ require app mà không listen
+if (require.main === module) {
+    connectDB();
+    const PORT = process.env.PORT || 9999;
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+module.exports = app;
