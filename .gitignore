@@ -1,3 +1,28 @@
+# dependencies
 node_modules/
+
+# env (chứa secret) — chỉ commit file mẫu
 .env
+.env.*
+!.env.example
+
+# testing
+coverage/
+
+# logs
+logs/
+*.log
+npm-debug.log*
+
+# uploads tạm (multer)
+uploads/
+
+# OS / IDE
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# AI agent
+CLAUDE.md
+AGENTS.md
