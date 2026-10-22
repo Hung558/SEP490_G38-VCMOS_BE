@@ -38,13 +38,15 @@ const seed = async () => {
   }
 
   const passwordHash = await bcrypt.hash('123456', 10);
+  // Mã cố định cho dữ liệu mẫu. Mã sinh tự động khi đăng ký không chứa số 0/1
+  // nên không bao giờ trùng với các mã này.
   const [owner, vet] = await User.create([
-    { fullName: 'Nguyen Van A', phone: '0901000001', email: 'owner@vcmos.com', passwordHash, role: 'PetOwner' },
-    { fullName: 'Tran Thi B', phone: '0901000002', email: 'vet@vcmos.com', passwordHash, role: 'Veterinarian' },
+    { code: 'USR-000001', fullName: 'Nguyen Van A', phone: '0901000001', email: 'owner@vcmos.com', passwordHash, role: 'PetOwner' },
+    { code: 'USR-000002', fullName: 'Tran Thi B', phone: '0901000002', email: 'vet@vcmos.com', passwordHash, role: 'Veterinarian' },
   ]);
 
   const pet = await Pet.create({
-    ownerId: owner._id, name: 'Milo', species: 'Dog', breed: 'Poodle', coatColor: 'Brown',
+    code: 'PET-000001', ownerId: owner._id, name: 'Milo', species: 'Dog', breed: 'Poodle', coatColor: 'Brown',
     dob: new Date('2023-05-01'), weight: 5.2, notes: 'Dị ứng hải sản',
   });
 

@@ -18,4 +18,21 @@ const protect = (req, res, next) => {
   }
 };
 
-module.exports = { protect };
+// Phân quyền theo role, luôn đặt SAU protect vì cần req.user.
+// Ví dụ: router.post('/', protect, authorize('Admin', 'Receptionist'), controller.create)
+const authorize = (...allowedRoles) => {
+  return (req, res, next) => {
+    // Phòng trường hợp quên gắn protect trước authorize
+    if (!req.user) {
+      return res.status(401).json({ message: 'Chưa đăng nhập' });
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({ message: 'Bạn không có quyền thực hiện chức năng này' });
+    }
+
+    next();
+  };
+};
+
+module.exports = { protect, authorize };
