@@ -2,6 +2,10 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { PHONE_REGEX } = require('../validators/auth.validator');
+const crypto = require('crypto');
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
+const CODE_LENGTH = 6;
+const MAX_CODE_RETRIES = 5;
 
 // Tạo lỗi có kèm mã HTTP để controller biết trả status nào
 const httpError = (statusCode, message) => {
@@ -12,6 +16,7 @@ const httpError = (statusCode, message) => {
 
 const toPublicUser = (user) => ({
   _id: user._id,
+  code: user.code,
   fullName: user.fullName,
   phone: user.phone,
   email: user.email,
@@ -24,6 +29,18 @@ const generateToken = (user) =>
     expiresIn: process.env.JWT_EXPIRES_IN || '1d',
   });
 
+const generateUserCode = () => {
+  let suffix = '';
+  for (let i = 0; i < CODE_LENGTH; i++) {
+    suffix += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
+  }
+  return `USR-${suffix}`; // e.g. USR-K7M2QX
+};
+
+const isDuplicateOn = (err, field) =>
+  err.code === 11000 &&
+  (err.keyPattern ? field in err.keyPattern : String(err.message).includes(`${field}_1`));
+
 // Tự đăng ký luôn là PetOwner; tài khoản nhân viên do Admin tạo.
 const register = async ({ fullName, phone, email, password }) => {
   phone = phone.trim();
@@ -32,20 +49,29 @@ const register = async ({ fullName, phone, email, password }) => {
   if (await User.exists({ phone })) throw httpError(409, 'Số điện thoại đã được đăng ký');
   if (email && (await User.exists({ email }))) throw httpError(409, 'Email đã được đăng ký');
 
-  try {
-    const user = await User.create({
-      fullName: fullName.trim(),
-      phone,
-      email,
-      passwordHash: await bcrypt.hash(password, 10),
-      role: 'PetOwner',
-    });
-    return toPublicUser(user);
-  } catch (err) {
-    // 2 request đăng ký cùng lúc vượt qua check ở trên → unique index chặn
-    if (err.code === 11000) throw httpError(409, 'Số điện thoại hoặc email đã được đăng ký');
-    throw err;
+  const passwordHash = await bcrypt.hash(password, 10);
+
+  for (let attempt = 1; attempt <= MAX_CODE_RETRIES; attempt++) {
+    try {
+      const user = await User.create({
+        code: generateUserCode(),
+        fullName: fullName.trim(),
+        phone,
+        email,
+        passwordHash,
+        role: 'PetOwner',
+      });
+      return toPublicUser(user);
+    } catch (err) {
+      if (isDuplicateOn(err, 'code')) continue;
+
+      // 2 request đăng ký cùng lúc vượt qua check ở trên → unique index chặn
+      if (err.code === 11000) throw httpError(409, 'Số điện thoại hoặc email đã được đăng ký');
+      throw err;
+    }
   }
+
+  throw httpError(500, 'Không thể tạo mã người dùng, vui lòng thử lại');
 };
 
 // identifier = số điện thoại hoặc email
