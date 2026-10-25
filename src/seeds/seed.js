@@ -53,14 +53,16 @@ const seed = async () => {
   await StaffSchedule.create({ staffId: vet._id, workDate: TODAY, notes: 'Ca sáng' });
 
   const service = await Service.create({
-    name: 'Khám tổng quát', category: 'Examination', defaultDuration: 30, basePrice: 150000,
+    code: 'SRV-000001', name: 'Khám tổng quát', category: 'Examination', defaultDuration: 30, basePrice: 150000,
     description: 'Khám sức khoẻ tổng quát cho thú cưng',
   });
 
-  const product = await Product.create({ name: 'Amoxicillin 250mg', category: 'Medicine', unit: 'viên', unitPrice: 5000 });
+  const product = await Product.create({
+    code: 'PRD-000001', name: 'Amoxicillin 250mg', category: 'Medicine', unit: 'viên', unitPrice: 5000,
+  });
 
   const order = await AppointmentOrder.create({
-    petId: pet._id, ownerId: owner._id, date: TODAY, note: 'Bé bỏ ăn 2 ngày',
+    code: 'ORD-000001', petId: pet._id, ownerId: owner._id, date: TODAY, note: 'Bé bỏ ăn 2 ngày',
     isOnline: true, derivedStatus: 'InProgress', checkedInAt: new Date(),
   });
 
@@ -69,7 +71,7 @@ const seed = async () => {
     assignedStaffId: vet._id, status: 'Done', queueNo: 1, enqueueAt: new Date(), dequeueAt: new Date(),
   });
 
-  const cage = await Cage.create({ label: 'C-01', status: 'Occupied' });
+  const cage = await Cage.create({ label: 'C-01', size: 'M', isIsolated: false, status: 'Occupied' });
 
   await CageAssignment.create({ cageId: cage._id, orderId: order._id, assignedById: vet._id });
 
@@ -96,7 +98,7 @@ const seed = async () => {
   });
 
   await Invoice.create({
-    orderId: order._id, issuedById: vet._id,
+    code: 'INV-000001', orderId: order._id, issuedById: vet._id,
     items: [
       { type: 'Service', refId: service._id, itemNameSnapshot: service.name, unitPriceSnapshot: 150000, quantity: 1, subtotal: 150000 },
       { type: 'Product', refId: product._id, itemNameSnapshot: product.name, unitPriceSnapshot: 5000, quantity: 10, subtotal: 50000 },

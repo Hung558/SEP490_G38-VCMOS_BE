@@ -11,6 +11,7 @@ const invoiceItemSchema = new mongoose.Schema({
 
 const invoiceSchema = new mongoose.Schema(
   {
+    code: { type: String, required: true, unique: true, trim: true, uppercase: true },
     orderId: { type: mongoose.Schema.Types.ObjectId, ref: 'AppointmentOrder', default: null },
     inpatientRecordId: { type: mongoose.Schema.Types.ObjectId, ref: 'InpatientRecord', default: null },
     issuedById: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
