@@ -13,7 +13,9 @@ const getMyProfile = async (req, res) => {
 
 const updateMyProfile = async (req, res) => {
   try {
-    const { fullName, phone, email } = req.body;
+    // Express 5: request không gửi body JSON thì req.body là undefined → dùng {} để validator trả 400
+    const body = req.body || {};
+    const { fullName, phone, email } = body;
 
     const { isValid, errors } = validateUpdateMyProfile({ fullName, phone, email });
     if (!isValid) {
