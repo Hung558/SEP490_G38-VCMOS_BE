@@ -39,10 +39,16 @@ describe('Auth', () => {
     }
   });
 
-  test('register: validate input', async () => {
+  test('register: validate input (thiếu dữ liệu, quá ngắn hoặc quá dài)', async () => {
     const res = await request(app).post('/api/auth/register').send({ phone: '123', password: '1' });
     expect(res.status).toBe(400);
     expect(Object.keys(res.body.errors).sort()).toEqual(['fullName', 'password', 'phone']);
+
+    const tooLong = await request(app)
+      .post('/api/auth/register')
+      .send({ fullName: 'A'.repeat(101), phone: '0901234567', password: 'p'.repeat(73) });
+    expect(tooLong.status).toBe(400);
+    expect(Object.keys(tooLong.body.errors).sort()).toEqual(['fullName', 'password']);
   });
 
   test('register: trùng phone / email → 409', async () => {
