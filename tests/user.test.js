@@ -82,6 +82,10 @@ describe('PUT /api/users/me', () => {
     const res = await updateProfile({ fullName: '   ', phone: '123', email: 'not-an-email' });
     expect(res.status).toBe(400);
     expect(Object.keys(res.body.errors).sort()).toEqual(['email', 'fullName', 'phone']);
+
+    const tooLong = await updateProfile({ fullName: 'A'.repeat(101), phone: owner.phone });
+    expect(tooLong.status).toBe(400);
+    expect(tooLong.body.errors.fullName).toBeTruthy();
   });
 
   test('trùng SĐT của người khác → 409', async () => {
