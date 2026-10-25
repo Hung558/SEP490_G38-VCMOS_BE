@@ -2,7 +2,7 @@ const PHONE_REGEX = /^0\d{9}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD = 8;
 
-const isBlank = (v) => typeof v !== 'string' || !v.trim();
+const isBlank = (value) => typeof value !== 'string' || !value.trim();
 
 const validateRegister = ({ fullName, phone, email, password } = {}) => {
   const errors = {};
