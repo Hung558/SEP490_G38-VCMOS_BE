@@ -60,6 +60,7 @@ VCMOS_BE/
 
 ### 2.1 Đăng ký
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'actorBkg': '#ffffff', 'actorBorder': '#000000', 'actorTextColor': '#000000', 'actorLineColor': '#000000', 'signalColor': '#000000', 'signalTextColor': '#000000', 'labelBoxBkgColor': '#ffffff', 'labelBoxBorderColor': '#000000', 'labelTextColor': '#000000', 'loopTextColor': '#000000' }}}%%
 sequenceDiagram
     actor Client
     participant Route as auth.routes
@@ -94,6 +95,7 @@ sequenceDiagram
 
 ### 2.2 Đăng nhập
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'actorBkg': '#ffffff', 'actorBorder': '#000000', 'actorTextColor': '#000000', 'actorLineColor': '#000000', 'signalColor': '#000000', 'signalTextColor': '#000000', 'labelBoxBkgColor': '#ffffff', 'labelBoxBorderColor': '#000000', 'labelTextColor': '#000000', 'loopTextColor': '#000000' }}}%%
 sequenceDiagram
     actor Client
     participant Ctrl as auth.controller
@@ -126,6 +128,7 @@ sequenceDiagram
 
 ### 2.3 Xem và sửa profile (có protect)
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'actorBkg': '#ffffff', 'actorBorder': '#000000', 'actorTextColor': '#000000', 'actorLineColor': '#000000', 'signalColor': '#000000', 'signalTextColor': '#000000', 'labelBoxBkgColor': '#ffffff', 'labelBoxBorderColor': '#000000', 'labelTextColor': '#000000', 'loopTextColor': '#000000' }}}%%
 sequenceDiagram
     actor Client
     participant MW as protect
@@ -168,6 +171,7 @@ sequenceDiagram
 ### 2.4 Phân quyền (authorize)
 Hiện chưa có route nào dùng `authorize`. Đây là luồng khi gắn vào một route.
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'actorBkg': '#ffffff', 'actorBorder': '#000000', 'actorTextColor': '#000000', 'actorLineColor': '#000000', 'signalColor': '#000000', 'signalTextColor': '#000000', 'labelBoxBkgColor': '#ffffff', 'labelBoxBorderColor': '#000000', 'labelTextColor': '#000000', 'loopTextColor': '#000000' }}}%%
 sequenceDiagram
     actor Client
     participant P as protect
@@ -194,6 +198,7 @@ sequenceDiagram
 
 ### 3.1 Các tầng code (module đã làm)
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'mainBkg': '#ffffff', 'nodeBorder': '#000000', 'classText': '#000000' }}}%%
 classDiagram
     class AuthRoutes {
         POST register
@@ -255,6 +260,7 @@ classDiagram
 
 ### 3.2 Domain model (17 collection)
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': { 'primaryColor': '#ffffff', 'primaryTextColor': '#000000', 'primaryBorderColor': '#000000', 'lineColor': '#000000', 'secondaryColor': '#ffffff', 'tertiaryColor': '#ffffff', 'mainBkg': '#ffffff', 'nodeBorder': '#000000', 'classText': '#000000' }}}%%
 classDiagram
     class User {
         String code
@@ -281,6 +287,7 @@ classDiagram
         String notes
     }
     class Service {
+        String code
         String name
         String category
         Number defaultDuration
@@ -288,6 +295,7 @@ classDiagram
         String status
     }
     class Product {
+        String code
         String name
         String category
         String unit
@@ -295,6 +303,7 @@ classDiagram
         String status
     }
     class AppointmentOrder {
+        String code
         ObjectId petId
         ObjectId ownerId
         String date
@@ -330,6 +339,8 @@ classDiagram
     }
     class Cage {
         String label
+        String size
+        Boolean isIsolated
         String status
     }
     class CageAssignment {
@@ -347,6 +358,7 @@ classDiagram
         DailyLog[] dailyLogs
     }
     class Invoice {
+        String code
         ObjectId orderId
         ObjectId inpatientRecordId
         ObjectId issuedById
@@ -412,7 +424,7 @@ classDiagram
 | Model | Ràng buộc |
 |---|---|
 | User | `code`, `phone` unique. `email` unique khi có giá trị (partial index) |
-| Pet | `code` unique |
+| Pet, Service, Product, AppointmentOrder, Invoice | `code` unique |
 | AppointmentService | (`orderId`, `sequenceNo`) unique |
 | CageAssignment | Mỗi chuồng chỉ có 1 assignment đang mở (`releasedAt = null`) |
 | InpatientRecord | Mỗi pet chỉ có 1 đợt nội trú `Admitted` |

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const appointmentOrderSchema = new mongoose.Schema(
   {
+    code: { type: String, required: true, unique: true, trim: true, uppercase: true },
     petId: { type: mongoose.Schema.Types.ObjectId, ref: 'Pet', required: true },
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ }, // YYYY-MM-DD
