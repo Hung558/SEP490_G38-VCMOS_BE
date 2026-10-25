@@ -54,3 +54,75 @@ describe('GET /api/users/me', () => {
   });
 });
 
+
+// Các test dưới chạy tuần tự và dùng chung user "owner" ở trên (đã đăng ký trong beforeAll)
+describe('PUT /api/users/me', () => {
+  const otherUser = { fullName: 'Tran Thi B', phone: '0912345678', email: 'b@mail.com', password: 'password123' };
+
+  beforeAll(async () => {
+    // Tạo thêm 1 user khác để test trùng SĐT / email
+    await request(app).post('/api/auth/register').send(otherUser);
+  });
+
+  const updateProfile = (body) =>
+    request(app).put('/api/users/me').set('Authorization', `Bearer ${token}`).send(body);
+
+  test('không có token → 401', async () => {
+    const res = await request(app).put('/api/users/me').send({ fullName: 'X', phone: '0900000000' });
+    expect(res.status).toBe(401);
+  });
+
+  test('không gửi body → 400 (không phải 500)', async () => {
+    const res = await request(app).put('/api/users/me').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body.errors).sort()).toEqual(['fullName', 'phone']);
+  });
+
+  test('dữ liệu sai → 400 kèm lỗi từng field', async () => {
+    const res = await updateProfile({ fullName: '   ', phone: '123', email: 'not-an-email' });
+    expect(res.status).toBe(400);
+    expect(Object.keys(res.body.errors).sort()).toEqual(['email', 'fullName', 'phone']);
+  });
+
+  test('trùng SĐT của người khác → 409', async () => {
+    const res = await updateProfile({ fullName: owner.fullName, phone: otherUser.phone });
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('Số điện thoại đã được sử dụng');
+  });
+
+  test('trùng email của người khác → 409', async () => {
+    const res = await updateProfile({ fullName: owner.fullName, phone: owner.phone, email: otherUser.email });
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('Email đã được sử dụng');
+  });
+
+  test('cập nhật thành công, không đổi được role/status/code', async () => {
+    const before = await request(app).get('/api/users/me').set('Authorization', `Bearer ${token}`);
+
+    const res = await updateProfile({
+      fullName: 'Nguyen Van A Moi',
+      phone: '0909999999',
+      email: 'New@Mail.com',
+      role: 'Admin',
+      status: 'Locked',
+      code: 'USR-HACKED',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user).toMatchObject({
+      fullName: 'Nguyen Van A Moi',
+      phone: '0909999999',
+      email: 'new@mail.com',
+      role: 'PetOwner',
+      status: 'Active',
+      code: before.body.user.code,
+    });
+    expect(res.body.user.passwordHash).toBeUndefined();
+  });
+
+  test('gửi email rỗng → xoá email', async () => {
+    const res = await updateProfile({ fullName: 'Nguyen Van A Moi', phone: '0909999999', email: '' });
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBeUndefined();
+  });
+});
