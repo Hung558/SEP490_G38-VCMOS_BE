@@ -1,9 +1,9 @@
 const PHONE_REGEX = /^0\d{9}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const isBlank = (v) => typeof v !== 'string' || !v.trim();
+const isBlank = (value) => typeof value !== 'string' || !value.trim();
 
-const validateUpdateMyProfile = ({fullName, phone, email } = {}) => {
+const validateUpdateMyProfile = ({ fullName, phone, email } = {}) => {
   const errors = {};
 
   if (isBlank(fullName)) errors.fullName = 'Họ tên là bắt buộc';
@@ -18,4 +18,4 @@ const validateUpdateMyProfile = ({fullName, phone, email } = {}) => {
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
-  module.exports = { validateUpdateMyProfile };
+module.exports = { validateUpdateMyProfile };

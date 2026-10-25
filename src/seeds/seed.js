@@ -8,7 +8,9 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
 const modelsDir = path.join(__dirname, '..', 'models');
-fs.readdirSync(modelsDir).forEach((f) => require(path.join(modelsDir, f)));
+for (const fileName of fs.readdirSync(modelsDir)) {
+  require(path.join(modelsDir, fileName));
+}
 const {
   User, Pet, StaffSchedule, Service, Product, AppointmentOrder, AppointmentService, Cage,
   CageAssignment, MedicalRecord, SubtaskRequest, InpatientRecord, Invoice, CommunityPost,
@@ -24,17 +26,17 @@ const seed = async () => {
   const models = Object.values(mongoose.models);
 
   // Chốt an toàn: DB đã có dữ liệu thì không xoá, trừ khi chạy kèm --force
-  const counts = await Promise.all(models.map((M) => M.countDocuments()));
-  if (counts.some((n) => n > 0) && !process.argv.includes('--force')) {
+  const counts = await Promise.all(models.map((Model) => Model.countDocuments()));
+  if (counts.some((count) => count > 0) && !process.argv.includes('--force')) {
     throw new Error(
       `DB "${mongoose.connection.name}" đã có dữ liệu → dừng để tránh mất dữ liệu. ` +
         'Nếu chắc chắn muốn XOÁ HẾT và seed lại: npm run seed -- --force'
     );
   }
 
-  for (const M of models) {
-    await M.deleteMany({});
-    await M.syncIndexes();
+  for (const Model of models) {
+    await Model.deleteMany({});
+    await Model.syncIndexes();
   }
 
   const passwordHash = await bcrypt.hash('123456', 10);
@@ -118,7 +120,7 @@ const seed = async () => {
 
   await ContentReport.create({ reporterId: owner._id, targetType: 'Comment', targetId: comment._id, reason: 'Test báo cáo' });
 
-  for (const M of models) console.log(`  ${M.collection.name}: ${await M.countDocuments()}`);
+  for (const Model of models) console.log(`  ${Model.collection.name}: ${await Model.countDocuments()}`);
   console.log('Seed done. Login: 0901000001 / 123456 (PetOwner), 0901000002 / 123456 (Veterinarian)');
 };
 

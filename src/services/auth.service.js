@@ -3,7 +3,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const { PHONE_REGEX } = require('../validators/auth.validator');
 const crypto = require('crypto');
-const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
 const MAX_CODE_RETRIES = 5;
 
@@ -34,12 +34,15 @@ const generateUserCode = () => {
   for (let i = 0; i < CODE_LENGTH; i++) {
     suffix += CODE_ALPHABET[crypto.randomInt(CODE_ALPHABET.length)];
   }
-  return `USR-${suffix}`; // e.g. USR-K7M2QX
+  return `USR-${suffix}`; // ví dụ: USR-K7M2QX
 };
 
-const isDuplicateOn = (err, field) =>
-  err.code === 11000 &&
-  (err.keyPattern ? field in err.keyPattern : String(err.message).includes(`${field}_1`));
+// Kiểm tra lỗi trùng khoá (11000) có phải rơi vào đúng field đang cần kiểm tra không
+const isDuplicateOn = (err, field) => {
+  if (err.code !== 11000) return false;
+  if (err.keyPattern) return field in err.keyPattern;
+  return String(err.message).includes(`${field}_1`);
+};
 
 // Tự đăng ký luôn là PetOwner; tài khoản nhân viên do Admin tạo.
 const register = async ({ fullName, phone, email, password }) => {

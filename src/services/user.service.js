@@ -21,27 +21,25 @@ const getMyProfile = async (userId) => {
   return user;
 };
 
-/**
- * Cập nhật thông tin cá nhân.
- * - Field nào là undefined thì giữ nguyên.
- * - email = '' hoặc null nghĩa là xoá email (phù hợp với partial unique index).
- */
+// Cập nhật thông tin cá nhân: email gửi rỗng hoặc null thì xoá email khỏi document
+// (để không bị đụng partial unique index của email).
 const updateMyProfile = async (userId, fullName, phone, email) => {
-  const update = { $set: {}, $unset: {} };
+  const fieldsToSet = {
+    fullName: fullName.trim(),
+    phone: phone.trim(),
+  };
 
-  if (fullName !== undefined) update.$set.fullName = fullName;
-  if (phone !== undefined) update.$set.phone = phone;
+  const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  const updateQuery = { $set: fieldsToSet };
 
-  if (email !== undefined) {
-    if (email) update.$set.email = email;
-    else update.$unset.email = 1; // empty/null -> remove email (partial unique index only covers strings)
+  if (trimmedEmail) {
+    fieldsToSet.email = trimmedEmail;
+  } else if (email !== undefined) {
+    updateQuery.$unset = { email: 1 };
   }
 
-  if (!Object.keys(update.$set).length) delete update.$set;
-  if (!Object.keys(update.$unset).length) delete update.$unset;
-
   try {
-    const user = await User.findByIdAndUpdate(userId, update, { new: true })
+    const user = await User.findByIdAndUpdate(userId, updateQuery, { returnDocument: 'after' })
       .select(PROFILE_FIELDS)
       .lean();
 
@@ -51,10 +49,10 @@ const updateMyProfile = async (userId, fullName, phone, email) => {
 
     return user;
   } catch (error) {
-    // Trùng phone hoặc email (unique index)
+    // Trùng phone hoặc email với tài khoản khác (unique index chặn)
     if (error.code === 11000) {
-      const field = Object.keys(error.keyPattern || {})[0];
-      const label = field === 'email' ? 'Email' : 'Số điện thoại';
+      const duplicateField = Object.keys(error.keyPattern || {})[0];
+      const label = duplicateField === 'email' ? 'Email' : 'Số điện thoại';
       throw httpError(409, `${label} đã được sử dụng`);
     }
     throw error;
