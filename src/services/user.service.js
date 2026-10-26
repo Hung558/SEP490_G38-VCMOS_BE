@@ -17,13 +17,13 @@ const PROFILE_FIELDS = 'code fullName phone email isEmailVerified role status cr
 
 // Gửi email OTP thật nếu đã cấu hình EMAIL_USER và EMAIL_PASS,
 // ngược lại (môi trường dev/test chưa cấu hình Gmail) thì in ra console và báo chưa gửi mail thật.
-const sendOtpEmail = async (toEmail, otp) => {
+const sendOtpEmail = async (toEmail, otp, purposeTitle = 'xác thực địa chỉ email') => {
   const emailUser = process.env.EMAIL_USER;
   const emailPass = process.env.EMAIL_PASS;
 
   if (!emailUser || !emailPass || process.env.NODE_ENV === 'test') {
     if (process.env.NODE_ENV !== 'test') {
-      console.log(`[DEV EMAIL OTP] Gửi tới ${toEmail} - Mã OTP: ${otp}`);
+      console.log(`[DEV EMAIL OTP - ${purposeTitle}] Gửi tới ${toEmail} - Mã OTP: ${otp}`);
     }
     return false;
   }
@@ -36,8 +36,8 @@ const sendOtpEmail = async (toEmail, otp) => {
   await transporter.sendMail({
     from: `"VCMOS Veterinary Clinic" <${emailUser}>`,
     to: toEmail,
-    subject: '[VCMOS] Mã xác thực địa chỉ Email của bạn',
-    text: `Mã xác thực email VCMOS của bạn là: ${otp}. Mã có hiệu lực trong 5 phút.`,
+    subject: `[VCMOS] Mã OTP ${purposeTitle}`,
+    text: `Mã OTP ${purposeTitle} tại VCMOS của bạn là: ${otp}. Mã có hiệu lực trong 5 phút.`,
     html: `
       <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 32px 16px;">
         <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
@@ -48,7 +48,7 @@ const sendOtpEmail = async (toEmail, otp) => {
           </div>
           <div style="padding: 28px 24px; color: #1e293b; line-height: 1.6;">
             <p style="margin-top: 0;">Xin chào,</p>
-            <p>Bạn vừa yêu cầu xác thực địa chỉ email cho tài khoản tại <strong>Phòng khám Thú y VCMOS</strong>. Vui lòng sử dụng mã OTP dưới đây để hoàn tất:</p>
+            <p>Bạn vừa yêu cầu <strong>${purposeTitle}</strong> cho tài khoản tại <strong>Phòng khám Thú y VCMOS</strong>. Vui lòng sử dụng mã OTP dưới đây để hoàn tất:</p>
             <div style="margin: 24px 0; padding: 18px; background-color: #f0fdfa; border: 2px dashed #0d9488; border-radius: 10px; text-align: center;">
               <span style="font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #0f766e;">${otp}</span>
             </div>
@@ -66,6 +66,31 @@ const sendOtpEmail = async (toEmail, otp) => {
   });
 
   return true;
+};
+
+// Hàm dùng chung để sinh OTP 6 số, lưu bản băm vào DB và gửi mail
+const createAndSendOtp = async (userId, toEmail, purposeTitle) => {
+  const otp = String(crypto.randomInt(100000, 1000000)); // 6 chữ số từ 100000 đến 999999
+  const emailOtpHash = await bcrypt.hash(otp, 10);
+  const emailOtpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
+
+  await User.findByIdAndUpdate(userId, {
+    $set: { emailOtpHash, emailOtpExpiresAt },
+  });
+
+  const sentViaEmail = await sendOtpEmail(toEmail, otp, purposeTitle);
+  return { sentViaEmail, devToken: sentViaEmail ? undefined : otp };
+};
+
+// Kiểm tra mã OTP có khớp và còn hạn không
+const assertValidOtp = async (user, otp) => {
+  if (!user.emailOtpHash || !user.emailOtpExpiresAt || user.emailOtpExpiresAt < new Date()) {
+    throw httpError(400, 'Mã xác thực không hợp lệ hoặc đã hết hạn');
+  }
+  const isOtpCorrect = await bcrypt.compare(otp.trim(), user.emailOtpHash);
+  if (!isOtpCorrect) {
+    throw httpError(400, 'Mã xác thực không hợp lệ hoặc đã hết hạn');
+  }
 };
 
 const getMyProfile = async (userId) => {
@@ -125,7 +150,7 @@ const updateMyProfile = async (userId, fullName, phone, email) => {
   }
 };
 
-// Bước 1 xác thực email: tạo OTP 6 số, lưu bản băm vào DB và gửi tới email đang lưu trong profile
+// Bước 1 xác thực email: gửi OTP 6 số tới email đang lưu trong profile
 const sendMyEmailOtp = async (userId) => {
   const user = await User.findById(userId).select('email isEmailVerified').lean();
   if (!user) {
@@ -138,16 +163,7 @@ const sendMyEmailOtp = async (userId) => {
     throw httpError(400, 'Email này đã được xác thực');
   }
 
-  const otp = String(crypto.randomInt(100000, 1000000)); // 6 chữ số từ 100000 đến 999999
-  const emailOtpHash = await bcrypt.hash(otp, 10);
-  const emailOtpExpiresAt = new Date(Date.now() + OTP_TTL_MS);
-
-  await User.findByIdAndUpdate(userId, {
-    $set: { emailOtpHash, emailOtpExpiresAt },
-  });
-
-  const sentViaEmail = await sendOtpEmail(user.email, otp);
-  return { sentViaEmail, devToken: sentViaEmail ? undefined : otp };
+  return createAndSendOtp(userId, user.email, 'xác thực địa chỉ email');
 };
 
 // Bước 2 xác thực email: kiểm tra mã OTP 6 số, đúng và còn hạn thì bật isEmailVerified = true
@@ -165,14 +181,8 @@ const verifyMyEmail = async (userId, otp) => {
   if (user.isEmailVerified) {
     throw httpError(400, 'Email này đã được xác thực');
   }
-  if (!user.emailOtpHash || !user.emailOtpExpiresAt || user.emailOtpExpiresAt < new Date()) {
-    throw httpError(400, 'Mã xác thực không hợp lệ hoặc đã hết hạn');
-  }
 
-  const isOtpCorrect = await bcrypt.compare(otp.trim(), user.emailOtpHash);
-  if (!isOtpCorrect) {
-    throw httpError(400, 'Mã xác thực không hợp lệ hoặc đã hết hạn');
-  }
+  await assertValidOtp(user, otp);
 
   const updatedUser = await User.findByIdAndUpdate(
     userId,
@@ -188,9 +198,92 @@ const verifyMyEmail = async (userId, otp) => {
   return updatedUser;
 };
 
+// Quên mật khẩu - Bước 1: gửi OTP tới email ĐÃ XÁC THỰC
+const forgotPassword = async (email) => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await User.findOne({ email: normalizedEmail }).select('email isEmailVerified status').lean();
+
+  if (!user) {
+    throw httpError(404, 'Không tìm thấy tài khoản với email này');
+  }
+  if (!user.isEmailVerified) {
+    throw httpError(400, 'Email này chưa được xác thực nên không thể dùng để khôi phục mật khẩu');
+  }
+  if (user.status === 'Locked') {
+    throw httpError(403, 'Tài khoản đã bị khoá, vui lòng liên hệ quản trị viên');
+  }
+
+  return createAndSendOtp(user._id, user.email, 'khôi phục mật khẩu');
+};
+
+// Quên mật khẩu - Bước 2: kiểm tra OTP và đặt mật khẩu mới
+const resetPassword = async (email, otp, newPassword) => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = await User.findOne({ email: normalizedEmail })
+    .select('+emailOtpHash +emailOtpExpiresAt isEmailVerified')
+    .lean();
+
+  if (!user) {
+    throw httpError(404, 'Không tìm thấy tài khoản với email này');
+  }
+  if (!user.isEmailVerified) {
+    throw httpError(400, 'Email này chưa được xác thực');
+  }
+
+  await assertValidOtp(user, otp);
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await User.findByIdAndUpdate(user._id, {
+    $set: { passwordHash },
+    $unset: { emailOtpHash: 1, emailOtpExpiresAt: 1 },
+  });
+};
+
+// Đổi mật khẩu khi đang đăng nhập - Bước 1: gửi OTP về email ĐÃ XÁC THỰC của mình
+const sendChangePasswordOtp = async (userId) => {
+  const user = await User.findById(userId).select('email isEmailVerified').lean();
+  if (!user) {
+    throw httpError(404, 'Không tìm thấy người dùng');
+  }
+  if (!user.email || !user.isEmailVerified) {
+    throw httpError(400, 'Bạn cần xác thực địa chỉ email trước khi đổi mật khẩu');
+  }
+
+  return createAndSendOtp(userId, user.email, 'đổi mật khẩu');
+};
+
+// Đổi mật khẩu khi đang đăng nhập - Bước 2: kiểm tra mật khẩu cũ + OTP rồi lưu mật khẩu mới
+const changeMyPassword = async (userId, currentPassword, newPassword, otp) => {
+  const user = await User.findById(userId)
+    .select('+passwordHash +emailOtpHash +emailOtpExpiresAt email isEmailVerified')
+    .lean();
+
+  if (!user) {
+    throw httpError(404, 'Không tìm thấy người dùng');
+  }
+  if (!user.email || !user.isEmailVerified) {
+    throw httpError(400, 'Bạn cần xác thực địa chỉ email trước khi đổi mật khẩu');
+  }
+  if (!user.passwordHash || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
+    throw httpError(400, 'Mật khẩu hiện tại không chính xác');
+  }
+
+  await assertValidOtp(user, otp);
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await User.findByIdAndUpdate(userId, {
+    $set: { passwordHash },
+    $unset: { emailOtpHash: 1, emailOtpExpiresAt: 1 },
+  });
+};
+
 module.exports = {
   getMyProfile,
   updateMyProfile,
   sendMyEmailOtp,
   verifyMyEmail,
+  forgotPassword,
+  resetPassword,
+  sendChangePasswordOtp,
+  changeMyPassword,
 };
