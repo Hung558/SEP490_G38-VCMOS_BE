@@ -43,5 +43,7 @@ module.exports = {
   PHONE_REGEX,
   EMAIL_REGEX,
   MAX_FULLNAME,
+  MIN_PASSWORD,
+  MAX_PASSWORD,
   isBlank,
 };

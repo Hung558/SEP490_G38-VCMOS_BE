@@ -202,3 +202,90 @@ describe('Email verification (/api/users/me/email/*)', () => {
     expect(res.body.user.isEmailVerified).toBe(false);
   });
 });
+
+describe('Forgot Password & Change Password via verified Email OTP', () => {
+  const verifiedEmail = 'another@mail.com';
+
+  test('email chưa verify thì KHÔNG được dùng forgot-password hoặc change-password → 400', async () => {
+    // Hiện tại another@mail.com của owner đang có isEmailVerified = false
+    const forgotRes = await request(app).post('/api/users/forgot-password').send({ email: verifiedEmail });
+    expect(forgotRes.status).toBe(400);
+
+    const changeOtpRes = await request(app)
+      .post('/api/users/me/password/send-otp')
+      .set('Authorization', `Bearer ${token}`);
+    expect(changeOtpRes.status).toBe(400);
+  });
+
+  test('sau khi verify email → đổi mật khẩu (send-otp + PUT /me/password) thành công', async () => {
+    // 1. Verify email another@mail.com trước
+    const sendVerify = await request(app)
+      .post('/api/users/me/email/send-otp')
+      .set('Authorization', `Bearer ${token}`);
+    await request(app)
+      .post('/api/users/me/email/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ otp: sendVerify.body.devToken });
+
+    // 2. Gửi OTP đổi mật khẩu
+    const sendPwdOtp = await request(app)
+      .post('/api/users/me/password/send-otp')
+      .set('Authorization', `Bearer ${token}`);
+    expect(sendPwdOtp.status).toBe(200);
+    expect(sendPwdOtp.body.devToken).toMatch(/^\d{6}$/);
+
+    // 3. Nhập sai mật khẩu cũ → 400
+    const wrongOldPwd = await request(app)
+      .put('/api/users/me/password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        otp: sendPwdOtp.body.devToken,
+        currentPassword: 'wrong_old_password',
+        newPassword: 'newpassword123',
+      });
+    expect(wrongOldPwd.status).toBe(400);
+    expect(wrongOldPwd.body.message).toBe('Mật khẩu hiện tại không chính xác');
+
+    // 4. Nhập đúng mật khẩu cũ + đúng OTP → 200
+    const changeRes = await request(app)
+      .put('/api/users/me/password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        otp: sendPwdOtp.body.devToken,
+        currentPassword: owner.password,
+        newPassword: 'newpassword123',
+      });
+    expect(changeRes.status).toBe(200);
+
+    // 5. Đăng nhập bằng mật khẩu mới thành công
+    const loginNew = await request(app)
+      .post('/api/auth/login')
+      .send({ identifier: verifiedEmail, password: 'newpassword123' });
+    expect(loginNew.status).toBe(200);
+  });
+
+  test('quên mật khẩu (forgot-password + reset-password) qua email đã verify thành công', async () => {
+    // 1. Yêu cầu OTP quên mật khẩu
+    const forgotRes = await request(app)
+      .post('/api/users/forgot-password')
+      .send({ email: verifiedEmail });
+    expect(forgotRes.status).toBe(200);
+    expect(forgotRes.body.devToken).toMatch(/^\d{6}$/);
+
+    // 2. Đặt lại mật khẩu mới (truyền field "token" giống FE ForgotPasswordForm.tsx)
+    const resetRes = await request(app)
+      .post('/api/users/reset-password')
+      .send({
+        email: verifiedEmail,
+        token: forgotRes.body.devToken,
+        password: 'resetpassword456',
+      });
+    expect(resetRes.status).toBe(200);
+
+    // 3. Đăng nhập bằng mật khẩu vừa reset thành công
+    const loginAfterReset = await request(app)
+      .post('/api/auth/login')
+      .send({ identifier: verifiedEmail, password: 'resetpassword456' });
+    expect(loginAfterReset.status).toBe(200);
+  });
+});

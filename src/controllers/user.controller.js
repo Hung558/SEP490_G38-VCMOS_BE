@@ -1,5 +1,11 @@
 const userService = require('../services/user.service');
-const { validateUpdateMyProfile, validateVerifyMyEmail } = require('../validators/user.validator');
+const {
+  validateUpdateMyProfile,
+  validateVerifyMyEmail,
+  validateForgotPassword,
+  validateResetPassword,
+  validateChangeMyPassword,
+} = require('../validators/user.validator');
 
 // Lấy id từ token (req.user do protect gán), không nhận id từ client để chống xem profile người khác
 const getMyProfile = async (req, res) => {
@@ -56,9 +62,74 @@ const verifyMyEmail = async (req, res) => {
   }
 };
 
+const forgotPassword = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { isValid, errors } = validateForgotPassword(body);
+    if (!isValid) {
+      return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+    }
+
+    const { devToken } = await userService.forgotPassword(body.email);
+    const response = { message: 'Mã OTP khôi phục mật khẩu đã được gửi tới email của bạn' };
+    if (devToken) response.devToken = devToken;
+
+    res.status(200).json(response);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { isValid, errors } = validateResetPassword(body);
+    if (!isValid) {
+      return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+    }
+
+    const otpValue = body.otp !== undefined ? body.otp : body.token;
+    await userService.resetPassword(body.email, otpValue, body.password);
+    res.status(200).json({ message: 'Đặt lại mật khẩu thành công' });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const sendChangePasswordOtp = async (req, res) => {
+  try {
+    const { devToken } = await userService.sendChangePasswordOtp(req.user.id);
+    const response = { message: 'Mã OTP đổi mật khẩu đã được gửi tới email của bạn' };
+    if (devToken) response.devToken = devToken;
+
+    res.status(200).json(response);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
+const changeMyPassword = async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { isValid, errors } = validateChangeMyPassword(body);
+    if (!isValid) {
+      return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+    }
+
+    await userService.changeMyPassword(req.user.id, body.currentPassword, body.newPassword, body.otp);
+    res.status(200).json({ message: 'Đổi mật khẩu thành công' });
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getMyProfile,
   updateMyProfile,
   sendMyEmailOtp,
   verifyMyEmail,
+  forgotPassword,
+  resetPassword,
+  sendChangePasswordOtp,
+  changeMyPassword,
 };
