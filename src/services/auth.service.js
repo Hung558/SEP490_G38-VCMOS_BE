@@ -20,6 +20,7 @@ const toPublicUser = (user) => ({
   fullName: user.fullName,
   phone: user.phone,
   email: user.email,
+  isEmailVerified: Boolean(user.isEmailVerified),
   role: user.role,
   status: user.status,
 });
