@@ -24,6 +24,7 @@ No request body. The user is identified by the token, not by any id sent from th
     "fullName": "Example User",
     "phone": "0987654321",
     "email": "exampleuser@gmail.com",
+    "isEmailVerified": false,
     "role": "PetOwner",
     "status": "Active",
     "createdAt": "2026-10-22T09:00:00.000Z"
@@ -53,4 +54,3 @@ No request body. The user is identified by the token, not by any id sent from th
 ```json
 { "message": "Internal server error" }
 ```
-

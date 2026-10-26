@@ -17,9 +17,9 @@ The user is identified by the token, so no user id is sent in the URL or body. A
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `fullName` | string | Yes | Full name. Must not be blank. Leading/trailing spaces are trimmed. |
+| `fullName` | string | Yes | Full name (1 to 100 characters). Must not be blank. Leading/trailing spaces are trimmed. |
 | `phone` | string | Yes | Phone number: exactly 10 digits, starting with `0` (e.g. `0901234567`). Must be unique across all users. |
-| `email` | string | No | Email address. Stored in lowercase. Must be unique across all users. Send an empty string `""` or `null` to remove the email. |
+| `email` | string | No | Email address. Stored in lowercase. Must be unique across all users. Send an empty string `""` or `null` to remove the email. If changed to a different address or removed, `isEmailVerified` automatically resets to `false`. |
 
 Both `fullName` and `phone` must be sent on every request, even if only one of them changed. Always send the full current values.
 
@@ -59,6 +59,7 @@ Returns the updated profile.
     "fullName": "Example User",
     "phone": "0987654321",
     "email": "exampleuser@gmail.com",
+    "isEmailVerified": false,
     "role": "PetOwner",
     "status": "Active",
     "createdAt": "2026-10-20T08:15:30.000Z"
@@ -88,13 +89,20 @@ Possible error messages per field:
 | Field | Message | Cause |
 |---|---|---|
 | `fullName` | `Họ tên là bắt buộc` | Missing, not a string, or blank |
+| `fullName` | `Họ tên không được vượt quá 100 ký tự` | Exceeds 100 characters |
 | `phone` | `Số điện thoại là bắt buộc` | Missing, not a string, or blank |
 | `phone` | `Số điện thoại phải gồm 10 số, bắt đầu bằng 0` | Wrong format |
 | `email` | `Email không hợp lệ` | Not a valid email format |
 
 ### 401 Unauthorized: missing or invalid token
 
-Returned by the auth middleware when the `Authorization` header is missing, malformed, or the token is invalid or expired. The front end should redirect the user to the login screen.
+```json
+{ "message": "Chưa đăng nhập" }
+```
+
+```json
+{ "message": "Token không hợp lệ hoặc đã hết hạn" }
+```
 
 ### 404 Not Found: user no longer exists
 

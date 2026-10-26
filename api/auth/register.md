@@ -15,10 +15,10 @@ Register a new pet owner account.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `fullName` | string | Yes | Full name. Leading/trailing spaces are trimmed. |
-| `phone` | string | Yes | Phone number. Trimmed and must be unique. Used as the login identifier. |
+| `fullName` | string | Yes | Full name (1 to 100 characters). Leading/trailing spaces are trimmed. |
+| `phone` | string | Yes | Phone number (10 digits starting with `0`). Trimmed and must be unique. Used as the login identifier. |
 | `email` | string | No | Email address. Trimmed and lowercased, must be unique if provided. |
-| `password` | string | Yes | Plain-text password. It is hashed on the server and never returned. |
+| `password` | string | Yes | Plain-text password (8 to 72 characters). It is hashed on the server and never returned. |
 
 **Example**
 
@@ -44,6 +44,7 @@ Register a new pet owner account.
     "fullName": "Example User 1",
     "phone": "0987654322",
     "email": "exampleuser1@gmail.com",
+    "isEmailVerified": false,
     "role": "PetOwner",
     "status": "Active"
   }

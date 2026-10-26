@@ -41,6 +41,7 @@ Log in with a phone number or email and password.
     "fullName": "Example User",
     "phone": "0987654321",
     "email": "exampleuser@gmail.com",
+    "isEmailVerified": false,
     "role": "PetOwner",
     "status": "Active"
   }
@@ -74,4 +75,6 @@ Log in with a phone number or email and password.
 ### 500 Internal Server Error
 ```json
 { "message": "Internal server error" }
+```
+
 ```
