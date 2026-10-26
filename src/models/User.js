@@ -6,6 +6,9 @@ const userSchema = new mongoose.Schema(
     fullName: { type: String, required: true, trim: true },
     phone: { type: String, required: true, unique: true, trim: true },
     email: { type: String, trim: true, lowercase: true },
+    isEmailVerified: { type: Boolean, default: false },
+    emailOtpHash: { type: String, default: null, select: false },
+    emailOtpExpiresAt: { type: Date, default: null, select: false },
     passwordHash: { type: String, default: null, select: false },
     role: {
       type: String,

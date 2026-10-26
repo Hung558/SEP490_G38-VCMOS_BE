@@ -130,3 +130,75 @@ describe('PUT /api/users/me', () => {
     expect(res.body.user.email).toBeUndefined();
   });
 });
+
+describe('Email verification (/api/users/me/email/*)', () => {
+  test('chưa có email mà bấm gửi OTP → 400', async () => {
+    // Ở test cuối của PUT /me ở trên, email của owner đã bị xoá
+    const res = await request(app)
+      .post('/api/users/me/email/send-otp')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(400);
+    expect(res.body.message).toBe('Tài khoản chưa cập nhật địa chỉ email');
+  });
+
+  test('cập nhật email → gửi OTP → nhập sai OTP (400) → nhập đúng OTP (200, isEmailVerified = true)', async () => {
+    // 1. Cập nhật lại email cho owner
+    await request(app)
+      .put('/api/users/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Nguyen Van A Moi', phone: '0909999999', email: 'verify@mail.com' });
+
+    // 2. Yêu cầu gửi mã OTP
+    const sendRes = await request(app)
+      .post('/api/users/me/email/send-otp')
+      .set('Authorization', `Bearer ${token}`);
+    expect(sendRes.status).toBe(200);
+    expect(sendRes.body.devToken).toMatch(/^\d{6}$/);
+
+    // 3. Nhập sai định dạng OTP → 400
+    const badFormat = await request(app)
+      .post('/api/users/me/email/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ otp: '123' });
+    expect(badFormat.status).toBe(400);
+
+    // 4. Nhập sai mã OTP → 400
+    const wrongOtp = sendRes.body.devToken === '000000' ? '111111' : '000000';
+    const wrongRes = await request(app)
+      .post('/api/users/me/email/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ otp: wrongOtp });
+    expect(wrongRes.status).toBe(400);
+
+    // 5. Nhập đúng mã OTP → 200 và isEmailVerified = true
+    const verifyRes = await request(app)
+      .post('/api/users/me/email/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ otp: sendRes.body.devToken });
+    expect(verifyRes.status).toBe(200);
+    expect(verifyRes.body.user.isEmailVerified).toBe(true);
+    expect(verifyRes.body.user.emailOtpHash).toBeUndefined();
+  });
+
+  test('email đã xác thực rồi mà gọi gửi OTP hoặc verify lần nữa → 400', async () => {
+    const sendAgain = await request(app)
+      .post('/api/users/me/email/send-otp')
+      .set('Authorization', `Bearer ${token}`);
+    expect(sendAgain.status).toBe(400);
+
+    const verifyAgain = await request(app)
+      .post('/api/users/me/email/verify')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ otp: '123456' });
+    expect(verifyAgain.status).toBe(400);
+  });
+
+  test('đổi sang email mới → isEmailVerified tự động reset về false', async () => {
+    const res = await request(app)
+      .put('/api/users/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ fullName: 'Nguyen Van A Moi', phone: '0909999999', email: 'another@mail.com' });
+    expect(res.status).toBe(200);
+    expect(res.body.user.isEmailVerified).toBe(false);
+  });
+});

@@ -16,4 +16,13 @@ const validateUpdateMyProfile = ({ fullName, phone, email } = {}) => {
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
-module.exports = { validateUpdateMyProfile };
+const validateVerifyMyEmail = ({ otp } = {}) => {
+  const errors = {};
+
+  if (isBlank(otp)) errors.otp = 'Vui lòng nhập mã xác thực';
+  else if (!/^\d{6}$/.test(otp.trim())) errors.otp = 'Mã xác thực phải gồm 6 chữ số';
+
+  return { isValid: Object.keys(errors).length === 0, errors };
+};
+
+module.exports = { validateUpdateMyProfile, validateVerifyMyEmail };
