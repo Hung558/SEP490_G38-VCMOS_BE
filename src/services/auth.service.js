@@ -94,4 +94,4 @@ const login = async ({ identifier, password }) => {
   return { token: generateToken(user), user: toPublicUser(user) };
 };
 
-module.exports = { register, login };
+module.exports = { register, login, generateUserCode };
