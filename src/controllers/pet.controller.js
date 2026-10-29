@@ -70,12 +70,12 @@ const updatePet = async (req, res) => {
   }
 };
 
-// DELETE /pets/:petId  (soft delete: status -> 'Archived')
+// DELETE /pets/:petId  (soft delete: status -> 'Deleted')
 const deletePet = async (req, res) => {
   try {
     const petId = validatePetId(req.params.petId);
     const pet = await petService.deletePet(req.user.id, petId);
-    return res.json({ message: 'Đã lưu trữ thú cưng', pet });
+    return res.json({ message: 'Đã xóa thú cưng', pet });
   } catch (err) {
     return handleError(res, err);
   }

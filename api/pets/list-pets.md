@@ -15,7 +15,7 @@ Get a paginated list of the logged-in user's pets, newest first. By default only
 
 | Parameter | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `status` | string | No | `Active` | Which pets to return: `Active`, `Archived` or `All`. Case-sensitive. |
+| `status` | string | No | `Active` | Which pets to return: `Active`, `Deleted` or `All`. Case-sensitive. |
 | `page` | integer | No | `1` | Page number, starting from `1`. |
 | `limit` | integer | No | `20` | Items per page, from `1` to `100`. |
 
@@ -67,6 +67,8 @@ GET http://localhost:9999/api/pets?status=All&page=1&limit=10
 
 If the user has no matching pets, or `page` is beyond the last page, the response is still `200` with `"items": []`. When `total` is `0`, `totalPages` is `0`.
 
+Pets removed with [Delete Pet](delete-pet.md) have `status` set to `Deleted`. They are hidden by default and only returned with `status=Deleted` or `status=All`.
+
 ### 400 Bad Request: invalid query parameters
 
 `errors` is an array, and all invalid parameters are reported together.
@@ -75,7 +77,7 @@ If the user has no matching pets, or `page` is beyond the last page, the respons
 {
   "message": "Tham số truy vấn không hợp lệ.",
   "errors": [
-    { "field": "status", "message": "Trạng thái phải là một trong: Active, Archived, All." },
+    { "field": "status", "message": "Trạng thái phải là một trong: Active, Deleted, All." },
     { "field": "limit", "message": "Số lượng mỗi trang phải từ 1 đến 100." }
   ]
 }

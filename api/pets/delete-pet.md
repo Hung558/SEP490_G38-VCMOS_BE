@@ -1,6 +1,6 @@
 # API Documentation: Delete Pet
 
-Archive one of the logged-in user's pets. This is a **soft delete**: the pet is not removed, its `status` is set to `Archived`.
+Delete one of the logged-in user's pets. This is a **soft delete**: the pet is not removed, its `status` is set to `Deleted`.
 
 ## Endpoint
 
@@ -23,14 +23,14 @@ Archive one of the logged-in user's pets. This is a **soft delete**: the pet is 
 DELETE http://localhost:9999/api/pets/6b1f0c2e9a3d4e5f60718293
 ```
 
-## What happens after archiving
+## What happens after deleting
 
-- The pet no longer appears in [List Pets](list-pets.md) by default. It appears with `status=Archived` or `status=All`.
+- The pet no longer appears in [List Pets](list-pets.md) by default. It appears with `status=Deleted` or `status=All`.
 - The pet can still be fetched with [Get Pet by ID](get-pet-by-id.md).
 - The pet can no longer be updated ([Update Pet](update-pet.md) returns `409`).
 - The photo is kept.
-- Calling this API again on an already archived pet is safe and returns `200` again.
-- There is currently no API to restore an archived pet.
+- Calling this API again on an already deleted pet is safe and returns `200` again.
+- There is currently no API to restore a deleted pet.
 
 ## Responses
 
@@ -38,7 +38,7 @@ DELETE http://localhost:9999/api/pets/6b1f0c2e9a3d4e5f60718293
 
 ```json
 {
-  "message": "Đã lưu trữ thú cưng",
+  "message": "Đã xóa thú cưng",
   "pet": {
     "_id": "6b1f0c2e9a3d4e5f60718293",
     "code": "PET-K7M2QX",
@@ -51,7 +51,7 @@ DELETE http://localhost:9999/api/pets/6b1f0c2e9a3d4e5f60718293
     "notes": "Allergic to chicken",
     "dob": "2021-03-15T00:00:00.000Z",
     "weight": 4.2,
-    "status": "Archived",
+    "status": "Deleted",
     "createdAt": "2026-10-27T03:15:42.123Z",
     "updatedAt": "2026-10-27T05:30:00.789Z",
     "__v": 0
@@ -59,7 +59,7 @@ DELETE http://localhost:9999/api/pets/6b1f0c2e9a3d4e5f60718293
 }
 ```
 
-`pet` is the archived pet (`status` is `Archived`). See the [Pet object](create-pet.md#pet-object) for the meaning of every field.
+`pet` is the deleted pet (`status` is `Deleted`). See the [Pet object](create-pet.md#pet-object) for the meaning of every field.
 
 ### 400 Bad Request: malformed pet id
 
