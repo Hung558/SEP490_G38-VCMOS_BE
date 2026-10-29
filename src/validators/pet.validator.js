@@ -5,7 +5,7 @@ const MAX_WEIGHT = 500; // kg
 const MAX_PHOTO_SIZE = 5 * 1024 * 1024; // 5 MB
 const DATA_URI_REGEX = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 const OBJECT_ID_REGEX = /^[0-9a-fA-F]{24}$/; //
-const LIST_STATUSES = ['Active', 'Archived', 'All'];
+const LIST_STATUSES = ['Active', 'Deleted', 'All'];
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;

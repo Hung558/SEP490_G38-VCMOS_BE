@@ -74,7 +74,7 @@ Every endpoint that returns a pet uses this shape.
 | `photoUrl` | string | Optional. HTTPS URL of the photo. The key is missing if the pet has no photo. |
 | `dob` | string | Optional. ISO 8601 date-time (UTC), e.g. `2021-03-15T00:00:00.000Z`. Missing or `null` if not set. Format it in UTC to avoid showing the previous day in time zones behind UTC. |
 | `weight` | number | Optional. Weight in kg. Missing or `null` if not set. |
-| `status` | string | `Active` or `Archived`. |
+| `status` | string | `Active` or `Deleted`. |
 | `createdAt`, `updatedAt` | string | ISO 8601 date-times. |
 | `__v` | number | Internal version key. Ignore it. |
 

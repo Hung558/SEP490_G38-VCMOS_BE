@@ -12,7 +12,7 @@ const petSchema = new mongoose.Schema(
     notes: String,
     dob: Date,
     weight: { type: Number, min: 0 },
-    status: { type: String, enum: ['Active', 'Archived'], default: 'Active' },
+    status: { type: String, enum: ['Active', 'Deleted'], default: 'Active' },
   },
   { timestamps: true }
 );

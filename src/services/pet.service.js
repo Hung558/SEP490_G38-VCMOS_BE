@@ -118,7 +118,7 @@ const getPetById = async (ownerId, petId) => {
  * List the owner's pets, newest first, with pagination.
  * @param {string} ownerId
  * @param {object} [options]
- * @param {'Active'|'Archived'|'All'} [options.status='Active']
+ * @param {'Active'|'Deleted'|'All'} [options.status='Active']
  * @param {number} [options.page=1]
  * @param {number} [options.limit=20]
  */
@@ -144,7 +144,7 @@ const listPets = async (ownerId, { status = 'Active', page = 1, limit = 20 } = {
 const updatePet = async (ownerId, petId, data = {}, photo) => {
   const pet = await Pet.findOne({ _id: petId, ownerId });
   if (!pet) throw createError('Không tìm thấy thú cưng', 404);
-  if (pet.status === 'Archived') throw createError('Không thể cập nhật các thú cưng đã được lưu trữ', 409);
+  if (pet.status === 'Deleted') throw createError('Không thể cập nhật các thú cưng đã bị xóa', 409);
 
   for (const key of UPDATABLE_FIELDS) {
     if (data[key] !== undefined) pet[key] = data[key];
@@ -169,13 +169,13 @@ const updatePet = async (ownerId, petId, data = {}, photo) => {
 };
 
 /**
- * "Delete" a pet: soft delete by setting status to 'Archived'.
+ * "Delete" a pet: soft delete by setting status to 'Deleted'.
  * The record and its photo are kept. Idempotent.
  */
 const deletePet = async (ownerId, petId) => {
   const pet = await Pet.findOneAndUpdate(
     { _id: petId, ownerId },
-    { $set: { status: 'Archived' } },
+    { $set: { status: 'Deleted' } },
     { new: true }
   );
   if (!pet) throw createError('Không tìm thấy thú cưng', 404);

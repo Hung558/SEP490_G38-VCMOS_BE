@@ -39,7 +39,7 @@ How values are applied:
 - **Optional field sent empty** (`""`, or `null` in JSON), for `species`, `breed`, `coatColor`, `notes`, `dob` or `weight`: the field is **cleared** (it becomes `null`). With `multipart/form-data`, send an empty string to clear a field. `name` cannot be cleared.
 - **`photo`:** replaces the existing photo, and the old image is deleted from storage. A photo can only be replaced, not removed.
 - `code`, `ownerId`, `status` and `photoUrl` cannot be changed through this API. Any such fields are ignored. A `photo` key inside a JSON body is also ignored.
-- Archived pets cannot be updated.
+- Deleted pets cannot be updated.
 
 **Example (JSON)**
 
@@ -157,15 +157,15 @@ The first is returned when the `Authorization: Bearer <token>` header is missing
 ### 404 Not Found: pet does not exist or is not yours
 
 ```json
-{ "message": "Pet not found" }
+{ "message": "Không tìm thấy thú cưng" }
 ```
 
 The same response is returned when the pet belongs to another user.
 
-### 409 Conflict: pet is archived
+### 409 Conflict: pet is deleted
 
 ```json
-{ "message": "Không thể cập nhật các thú cưng đã được lưu trữ" }
+{ "message": "Không thể cập nhật các thú cưng đã bị xóa" }
 ```
 
 ### 500 Internal Server Error

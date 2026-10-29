@@ -1,6 +1,6 @@
 # API Documentation: Get Pet by ID
 
-Get one pet by its id. Only the pet's owner can read it. Both `Active` and `Archived` pets can be fetched.
+Get one pet by its id. Only the pet's owner can read it. Both `Active` and `Deleted` pets can be fetched.
 
 ## Endpoint
 
@@ -77,7 +77,7 @@ The first is returned when the `Authorization: Bearer <token>` header is missing
 ### 404 Not Found: pet does not exist or is not yours
 
 ```json
-{ "message": "Pet not found" }
+{ "message": "Không tìm thấy thú cưng" }
 ```
 
 The same response is returned when the pet belongs to another user, so the API never reveals whether someone else's pet exists.
