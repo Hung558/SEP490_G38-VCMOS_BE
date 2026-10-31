@@ -176,21 +176,21 @@ describe('Admin Account Management (/api/admin/users - SCR-32, UC-60/61/62, BR-2
     expect(notFound.status).toBe(404);
   });
 
-  test('PUT /api/admin/users/:id: cập nhật thông tin và điều chuyển vai trò nhân sự', async () => {
+  test('PUT /api/admin/users/:id: cập nhật họ tên và điều chuyển vai trò nhân sự (không đổi phone/email)', async () => {
     const updateRes = await request(app)
       .put(`/api/admin/users/${createdStaffId}`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         fullName: 'Tran Minh Cap Nhat',
-        phone: '0977111333',
-        email: 'minh.groomer@vcmos.vn',
         role: 'Groomer',
+        phone: '0999999999', // Gửi thử phone/email nhưng BE sẽ bỏ qua để bảo vệ định danh đăng nhập
+        email: 'hacked@vcmos.vn',
       });
     expect(updateRes.status).toBe(200);
     expect(updateRes.body.user).toMatchObject({
       fullName: 'Tran Minh Cap Nhat',
-      phone: '0977111333',
-      email: 'minh.groomer@vcmos.vn',
+      phone: '0977111222',
+      email: 'vetminh@vcmos.vn',
       role: 'Groomer',
     });
 
@@ -200,7 +200,6 @@ describe('Admin Account Management (/api/admin/users - SCR-32, UC-60/61/62, BR-2
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         fullName: ownerData.fullName,
-        phone: ownerData.phone,
         role: 'Receptionist',
       });
     expect(changeOwnerRole.status).toBe(400);
@@ -218,7 +217,7 @@ describe('Admin Account Management (/api/admin/users - SCR-32, UC-60/61/62, BR-2
     // Nhân sự bị khóa không thể đăng nhập (403)
     const loginLocked = await request(app)
       .post('/api/auth/login')
-      .send({ identifier: '0977111333', password: 'staffpassword123' });
+      .send({ identifier: '0977111222', password: 'staffpassword123' });
     expect(loginLocked.status).toBe(403);
 
     // 2. Mở khóa tài khoản

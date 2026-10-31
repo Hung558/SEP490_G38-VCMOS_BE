@@ -84,7 +84,7 @@ Tài liệu hướng dẫn test từng bước từ A → Z trên **Postman** ch
 
 ---
 
-## BƯỚC 5: Cập nhật thông tin & điều chuyển vai trò nhân sự (`SCR-32`)
+## BƯỚC 5: Cập nhật họ tên & điều chuyển vai trò nhân sự (`SCR-32`)
 
 - **Method**: `PUT`
 - **URL**: `http://localhost:9999/api/admin/users/<dán_id_nhân_viên_vừa_tạo>`
@@ -93,13 +93,11 @@ Tài liệu hướng dẫn test từng bước từ A → Z trên **Postman** ch
   ```json
   {
     "fullName": "Trần Minh (Chuyển sang Groomer)",
-    "phone": "0977111222",
-    "email": "minh.groomer@vcmos.vn",
     "role": "Groomer"
   }
   ```
 - **Bấm Send**:
-  - Ra `200 OK`, tên, email và `role` của nhân viên đã được cập nhật sang `"Groomer"`.
+  - Ra `200 OK`, họ tên và `role` của nhân viên đã được cập nhật sang `"Groomer"` (SĐT và Email được giữ nguyên để bảo vệ định danh đăng nhập chính chủ).
 
 ---
 

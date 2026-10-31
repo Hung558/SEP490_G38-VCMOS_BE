@@ -1,6 +1,6 @@
 # API Documentation: Update User Account (Admin - SCR-32)
 
-Update a user or staff account's full name, phone, email, and (for staff accounts) their staff role.
+Update a user or staff account's full name and (for staff accounts) their staff role. Phone number and email are personal login identifiers and OTP-verified fields, so they can only be updated by the account owner via `/api/users/me`.
 
 ## Endpoint
 
@@ -16,8 +16,6 @@ Update a user or staff account's full name, phone, email, and (for staff account
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `fullName` | string | Yes | Full name (1 to 100 characters). |
-| `phone` | string | Yes | Phone number: 10 digits starting with `0` (unique). |
-| `email` | string | No | Email address. Send `""` to remove email. If changed, `isEmailVerified` resets to `false`. |
 | `role` | string | No | Staff role (`Receptionist`, `Veterinarian`, `Groomer`). Only allowed when the target user is a staff member. |
 
 **Example**
@@ -25,8 +23,6 @@ Update a user or staff account's full name, phone, email, and (for staff account
 ```json
 {
   "fullName": "Trần Minh (Groomer)",
-  "phone": "0977111222",
-  "email": "minh.groomer@vcmos.vn",
   "role": "Groomer"
 }
 ```

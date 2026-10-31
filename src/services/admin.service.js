@@ -112,13 +112,14 @@ const createStaffAccount = async ({ fullName, phone, email, password, role }) =>
   throw httpError(500, 'Không thể tạo mã nhân viên, vui lòng thử lại');
 };
 
-// SCR-32: Admin cập nhật thông tin tài khoản (cho phép đổi role giữa các vị trí nhân sự)
-const updateUserByAdmin = async (targetUserId, { fullName, phone, email, role }) => {
+// SCR-32: Admin cập nhật thông tin hành chính của tài khoản (chỉ sửa fullName và điều chuyển role nhân sự;
+// không can thiệp vào phone/email vì đó là định danh đăng nhập và gắn với xác thực OTP chính chủ)
+const updateUserByAdmin = async (targetUserId, { fullName, role }) => {
   if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
     throw httpError(400, 'ID người dùng không hợp lệ');
   }
 
-  const currentUser = await User.findById(targetUserId).select('email role').lean();
+  const currentUser = await User.findById(targetUserId).select('role').lean();
   if (!currentUser) {
     throw httpError(404, 'Không tìm thấy người dùng');
   }
@@ -131,39 +132,19 @@ const updateUserByAdmin = async (targetUserId, { fullName, phone, email, role })
 
   const fieldsToSet = {
     fullName: fullName.trim(),
-    phone: phone.trim(),
   };
 
   if (role !== undefined) {
     fieldsToSet.role = role;
   }
 
-  const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-  const updateQuery = { $set: fieldsToSet };
-
-  if (trimmedEmail) {
-    fieldsToSet.email = trimmedEmail;
-    if (trimmedEmail !== currentUser.email) {
-      fieldsToSet.isEmailVerified = false;
-      updateQuery.$unset = { emailOtpHash: 1, emailOtpExpiresAt: 1 };
-    }
-  } else if (email !== undefined) {
-    fieldsToSet.isEmailVerified = false;
-    updateQuery.$unset = { email: 1, emailOtpHash: 1, emailOtpExpiresAt: 1 };
-  }
-
-  try {
-    return await User.findByIdAndUpdate(targetUserId, updateQuery, { returnDocument: 'after' })
-      .select(PROFILE_FIELDS)
-      .lean();
-  } catch (error) {
-    if (error.code === 11000) {
-      const duplicateField = Object.keys(error.keyPattern || {})[0];
-      const label = duplicateField === 'email' ? 'Email' : 'Số điện thoại';
-      throw httpError(409, `${label} đã được sử dụng`);
-    }
-    throw error;
-  }
+  return User.findByIdAndUpdate(
+    targetUserId,
+    { $set: fieldsToSet },
+    { returnDocument: 'after' }
+  )
+    .select(PROFILE_FIELDS)
+    .lean();
 };
 
 // UC-62 & BR-22: Admin khóa (Locked) hoặc mở khóa (Active) tài khoản (không xóa vật lý)
