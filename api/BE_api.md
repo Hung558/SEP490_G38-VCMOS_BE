@@ -110,12 +110,12 @@ Body: { "fullName": "Trần Minh (Groomer)", "phone": "0977111222", "email": "mi
 Tab Authorization → Type chọn Bearer Token → dán token của Admin.
 Mong đợi 200 và trả về thông tin user đã cập nhật.
 
-Admin - Khóa / Mở khóa / Đổi trạng thái tài khoản (UC-62):
+Admin - Khóa / Mở khóa tài khoản (UC-62):
 Method: PATCH
 Url: http://localhost:9999/api/admin/users/:id/status
 Body: { "status": "Locked" }
 Tab Authorization → Type chọn Bearer Token → dán token của Admin.
-Mong đợi 200 (status nhận "Active", "Locked", hoặc "Inactive"). Tài khoản bị Locked/Inactive sẽ bị chặn đăng nhập (403). Admin không thể tự khóa chính mình (400).
+Mong đợi 200 (status chỉ nhận "Active" hoặc "Locked", truyền "Inactive" sẽ báo lỗi 400). Tài khoản bị Locked sẽ bị chặn đăng nhập (403). Admin không thể tự khóa chính mình (400).
 
 Admin - Xóa tài khoản (Kiểm tra quy tắc cấm xóa vật lý BR-22):
 Method: DELETE

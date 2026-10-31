@@ -10,6 +10,7 @@ const {
 const STAFF_ROLES = ['Receptionist', 'Veterinarian', 'Groomer'];
 const ALL_ROLES = ['PetOwner', 'Receptionist', 'Veterinarian', 'Groomer', 'Admin'];
 const USER_STATUSES = ['Active', 'Inactive', 'Locked'];
+const ADMIN_ALLOWED_STATUSES = ['Active', 'Locked'];
 
 const validatePasswordValue = (password) => {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD) {
@@ -68,14 +69,14 @@ const validateUpdateUserByAdmin = ({ fullName, phone, email, role } = {}) => {
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
-// UC-62: Admin khóa / mở khóa / đổi trạng thái tài khoản
+// UC-62: Admin chỉ được phép khóa (Locked) hoặc mở khóa (Active) tài khoản
 const validateUpdateUserStatus = ({ status } = {}) => {
   const errors = {};
 
   if (isBlank(status)) {
     errors.status = 'Trạng thái tài khoản là bắt buộc';
-  } else if (!USER_STATUSES.includes(status)) {
-    errors.status = 'Trạng thái chỉ được là Active, Inactive hoặc Locked';
+  } else if (!ADMIN_ALLOWED_STATUSES.includes(status)) {
+    errors.status = 'Trạng thái chỉ được là Active hoặc Locked';
   }
 
   return { isValid: Object.keys(errors).length === 0, errors };
@@ -85,6 +86,7 @@ module.exports = {
   STAFF_ROLES,
   ALL_ROLES,
   USER_STATUSES,
+  ADMIN_ALLOWED_STATUSES,
   validateCreateStaff,
   validateUpdateUserByAdmin,
   validateUpdateUserStatus,

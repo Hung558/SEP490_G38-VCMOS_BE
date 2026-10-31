@@ -166,15 +166,15 @@ const updateUserByAdmin = async (targetUserId, { fullName, phone, email, role })
   }
 };
 
-// UC-62 & BR-22: Admin khóa / mở khóa / đổi trạng thái tài khoản (không xóa vật lý)
+// UC-62 & BR-22: Admin khóa (Locked) hoặc mở khóa (Active) tài khoản (không xóa vật lý)
 const updateUserStatus = async (adminId, targetUserId, status) => {
   if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
     throw httpError(400, 'ID người dùng không hợp lệ');
   }
 
-  // Không cho Admin tự khóa hoặc tự vô hiệu hóa tài khoản của chính mình
-  if (String(adminId) === String(targetUserId) && status !== 'Active') {
-    throw httpError(400, 'Không thể tự khóa hoặc vô hiệu hóa tài khoản của chính mình');
+  // Không cho Admin tự khóa tài khoản của chính mình
+  if (String(adminId) === String(targetUserId) && status === 'Locked') {
+    throw httpError(400, 'Không thể tự khóa tài khoản của chính mình');
   }
 
   const user = await User.findByIdAndUpdate(
