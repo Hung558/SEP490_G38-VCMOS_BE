@@ -123,3 +123,51 @@ Url: http://localhost:9999/api/admin/users/:id
 Body: không cần
 Tab Authorization → Type chọn Bearer Token → dán token của Admin.
 Mong đợi 403 (Không được phép xóa vật lý tài khoản người dùng theo BR-22, chỉ sử dụng chức năng khóa tài khoản).
+
+======================================================================
+QUẢN LÝ DANH MỤC DỊCH VỤ & BẢNG GIÁ (SCR-29, SCR-02, UC-66, UC-01, BR-24)
+(GET công khai cho mọi vai trò; POST/PUT/PATCH/DELETE chỉ dành cho Admin)
+======================================================================
+
+Xem danh sách, lọc & tìm kiếm dịch vụ (Công khai - UC-01 & UC-66):
+Method: GET
+Url: http://localhost:9999/api/services
+Query (tùy chọn): ?category=Examination&status=Active&search=tổng quát
+Body: không cần (Không cần gắn token)
+Mong đợi 200 và danh sách services (sắp xếp mới nhất lên đầu).
+Lưu ý: category nhận "Examination", "Vaccination", "Grooming", "Paraclinical", "Inpatient"; status nhận "Active" hoặc "Inactive".
+
+Xem chi tiết 1 dịch vụ theo ID (Công khai):
+Method: GET
+Url: http://localhost:9999/api/services/:id
+Body: không cần (Không cần gắn token)
+Mong đợi 200 và thông tin chi tiết của service.
+
+Admin - Tạo dịch vụ mới (UC-66 & BR-24):
+Method: POST
+Url: http://localhost:9999/api/services
+Body: { "name": "Khám tổng quát chuyên sâu", "category": "Examination", "defaultDuration": 30, "basePrice": 150000, "description": "Khám lâm sàng toàn diện cho thú cưng" }
+Tab Authorization → Type chọn Bearer Token → dán token của Admin.
+Mong đợi 201 (Tự động sinh mã code SRV-XXXXXX bất biến, status mặc định Active).
+Lưu ý: defaultDuration là số nguyên từ 5 đến 480 phút; basePrice >= 0. Trùng tên trong cùng category sẽ trả 409.
+
+Admin - Cập nhật thông tin dịch vụ (UC-66 & SCR-29):
+Method: PUT
+Url: http://localhost:9999/api/services/:id
+Body: { "name": "Khám tổng quát chuyên sâu (Gói tiêu chuẩn)", "category": "Examination", "defaultDuration": 45, "basePrice": 180000, "description": "Cập nhật thời lượng 45 phút và giá niêm yết mới" }
+Tab Authorization → Type chọn Bearer Token → dán token của Admin.
+Mong đợi 200 và thông tin service đã cập nhật (mã code SRV-XXXXXX giữ nguyên bất biến).
+
+Admin - Tạm ngưng / Kích hoạt lại dịch vụ (UC-66 & SCR-29):
+Method: PATCH
+Url: http://localhost:9999/api/services/:id/status
+Body: { "status": "Inactive" }
+Tab Authorization → Type chọn Bearer Token → dán token của Admin.
+Mong đợi 200 (status chỉ nhận "Active" hoặc "Inactive"). Dịch vụ Inactive sẽ ẩn khỏi danh sách đặt lịch (?status=Active) nhưng vẫn giữ nguyên trong DB cho đơn hẹn/hóa đơn cũ.
+
+Admin - Xóa dịch vụ (Kiểm tra quy tắc cấm xóa vật lý SCR-29 & BR-16):
+Method: DELETE
+Url: http://localhost:9999/api/services/:id
+Body: không cần
+Tab Authorization → Type chọn Bearer Token → dán token của Admin.
+Mong đợi 403 (Không được phép xóa vật lý dịch vụ để bảo toàn lịch sử đơn hẹn và hóa đơn, chỉ chuyển trạng thái sang Inactive).

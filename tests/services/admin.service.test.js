@@ -467,15 +467,15 @@ describe('updateUserByAdmin', () => {
     expect(User.findByIdAndUpdate).not.toHaveBeenCalled();
   });
 
-  it('loads only email and role of the current user', async () => {
+  it('loads only the role of the current user', async () => {
     const query = mockUserFindById({ _id: TARGET_ID, email: CURRENT_EMAIL, role: 'Receptionist' });
 
     await adminService.updateUserByAdmin(TARGET_ID, input);
 
-    expect(query.select).toHaveBeenCalledWith('email role');
+    expect(query.select).toHaveBeenCalledWith('role');
   });
 
-  it('trims name and phone, and returns the updated lean profile', async () => {
+  it('trims name, ignores phone/email, and returns the updated lean profile', async () => {
     const updated = { _id: TARGET_ID, fullName: 'New Name' };
     const query = mockUserFindByIdAndUpdate(updated);
 
@@ -483,7 +483,7 @@ describe('updateUserByAdmin', () => {
 
     expect(User.findByIdAndUpdate).toHaveBeenCalledWith(
       TARGET_ID,
-      { $set: { fullName: 'New Name', phone: '0987654321' } },
+      { $set: { fullName: 'New Name' } },
       { returnDocument: 'after' }
     );
     expect(query.select).toHaveBeenCalledWith(PROFILE_FIELDS);
@@ -534,74 +534,8 @@ describe('updateUserByAdmin', () => {
     });
   });
 
-  describe('email handling', () => {
-    it('leaves email and verification untouched when email is undefined', async () => {
-      await adminService.updateUserByAdmin(TARGET_ID, { ...input, email: undefined });
-
-      const q = getUpdateQuery();
-      expect(q.$set).not.toHaveProperty('email');
-      expect(q.$set).not.toHaveProperty('isEmailVerified');
-      expect(q).not.toHaveProperty('$unset');
-    });
-
-    it('keeps verification when the email is unchanged (ignoring case and whitespace)', async () => {
-      await adminService.updateUserByAdmin(TARGET_ID, { ...input, email: '  OLD@Clinic.com ' });
-
-      const q = getUpdateQuery();
-      expect(q.$set.email).toBe(CURRENT_EMAIL);
-      expect(q.$set).not.toHaveProperty('isEmailVerified');
-      expect(q).not.toHaveProperty('$unset');
-    });
-
-    it('resets verification and clears OTP data when the email changes', async () => {
-      await adminService.updateUserByAdmin(TARGET_ID, { ...input, email: ' NEW@Clinic.com ' });
-
-      const q = getUpdateQuery();
-      expect(q.$set).toMatchObject({ email: 'new@clinic.com', isEmailVerified: false });
-      expect(q.$unset).toEqual(OTP_UNSET);
-    });
-
-    it.each([[''], ['   '], [null]])(
-      'removes the email, resets verification and clears OTP data when email is %p',
-      async (email) => {
-        await adminService.updateUserByAdmin(TARGET_ID, { ...input, email });
-
-        const q = getUpdateQuery();
-        expect(q.$set).not.toHaveProperty('email');
-        expect(q.$set.isEmailVerified).toBe(false);
-        expect(q.$unset).toEqual({ email: 1, ...OTP_UNSET });
-      }
-    );
-  });
-
   describe('errors', () => {
-    it('throws 409 mentioning email for a duplicate email', async () => {
-      mockUserFindByIdAndUpdate(duplicateError({ email: 1 }));
-
-      await expect(
-        adminService.updateUserByAdmin(TARGET_ID, { ...input, email: 'x@clinic.com' })
-      ).rejects.toMatchObject({ statusCode: 409, message: 'Email đã được sử dụng' });
-    });
-
-    it('throws 409 mentioning the phone number for a duplicate phone', async () => {
-      mockUserFindByIdAndUpdate(duplicateError({ phone: 1 }));
-
-      await expect(adminService.updateUserByAdmin(TARGET_ID, input)).rejects.toMatchObject({
-        statusCode: 409,
-        message: 'Số điện thoại đã được sử dụng',
-      });
-    });
-
-    it('falls back to the phone message when keyPattern is missing', async () => {
-      mockUserFindByIdAndUpdate(duplicateError());
-
-      await expect(adminService.updateUserByAdmin(TARGET_ID, input)).rejects.toMatchObject({
-        statusCode: 409,
-        message: 'Số điện thoại đã được sử dụng',
-      });
-    });
-
-    it('rethrows non-duplicate errors unchanged', async () => {
+    it('rethrows database errors unchanged', async () => {
       const err = new Error('db down');
       mockUserFindByIdAndUpdate(err);
 
@@ -623,12 +557,12 @@ describe('updateUserStatus', () => {
   });
 
   describe('self-protection', () => {
-    it.each([['Locked'], ['Inactive']])('prevents an admin from setting their own status to %s', async (status) => {
+    it('prevents an admin from setting their own status to Locked', async () => {
       await expect(
-        adminService.updateUserStatus(ADMIN_ID, ADMIN_ID, status)
+        adminService.updateUserStatus(ADMIN_ID, ADMIN_ID, 'Locked')
       ).rejects.toMatchObject({
         statusCode: 400,
-        message: 'Không thể tự khóa hoặc vô hiệu hóa tài khoản của chính mình',
+        message: 'Không thể tự khóa tài khoản của chính mình',
       });
       expect(User.findByIdAndUpdate).not.toHaveBeenCalled();
     });
