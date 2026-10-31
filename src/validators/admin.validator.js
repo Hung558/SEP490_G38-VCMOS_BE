@@ -48,19 +48,13 @@ const validateCreateStaff = ({ fullName, phone, email, password, role } = {}) =>
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
-// SCR-32: Admin cập nhật thông tin tài khoản người dùng / nhân sự
-const validateUpdateUserByAdmin = ({ fullName, phone, email, role } = {}) => {
+// SCR-32: Admin cập nhật thông tin tài khoản (chỉ cho phép sửa Họ tên và điều chuyển Vai trò nhân sự;
+// SĐT và Email là định danh đăng nhập & gắn với OTP cá nhân nên do chính chủ tự đổi ở /api/users/me)
+const validateUpdateUserByAdmin = ({ fullName, role } = {}) => {
   const errors = {};
 
   if (isBlank(fullName)) errors.fullName = 'Họ tên là bắt buộc';
   else if (fullName.trim().length > MAX_FULLNAME) errors.fullName = `Họ tên không được vượt quá ${MAX_FULLNAME} ký tự`;
-
-  if (isBlank(phone)) errors.phone = 'Số điện thoại là bắt buộc';
-  else if (!PHONE_REGEX.test(phone.trim())) errors.phone = 'Số điện thoại phải gồm 10 số, bắt đầu bằng 0';
-
-  if (email !== undefined && email !== null && email !== '') {
-    if (typeof email !== 'string' || !EMAIL_REGEX.test(email.trim())) errors.email = 'Email không hợp lệ';
-  }
 
   if (role !== undefined && !STAFF_ROLES.includes(role)) {
     errors.role = 'Vai trò nhân viên chỉ được là Receptionist, Veterinarian hoặc Groomer';

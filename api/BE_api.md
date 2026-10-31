@@ -103,12 +103,12 @@ Tab Authorization → Type chọn Bearer Token → dán token của Admin.
 Mong đợi 201 (Tự động sinh mã code USR-XXXXXX, status mặc định Active).
 Lưu ý: role chỉ nhận "Receptionist", "Veterinarian", hoặc "Groomer". Trùng SĐT/email sẽ trả 409.
 
-Admin - Cập nhật thông tin & điều chuyển vai trò nhân sự (SCR-32):
+Admin - Cập nhật họ tên & điều chuyển vai trò nhân sự (SCR-32):
 Method: PUT
 Url: http://localhost:9999/api/admin/users/:id
-Body: { "fullName": "Trần Minh (Groomer)", "phone": "0977111222", "email": "minh.groomer@vcmos.vn", "role": "Groomer" }
+Body: { "fullName": "Trần Minh (Groomer)", "role": "Groomer" }
 Tab Authorization → Type chọn Bearer Token → dán token của Admin.
-Mong đợi 200 và trả về thông tin user đã cập nhật.
+Mong đợi 200 và trả về thông tin user đã cập nhật (SĐT và Email là định danh cá nhân nên không sửa qua API này).
 
 Admin - Khóa / Mở khóa tài khoản (UC-62):
 Method: PATCH
