@@ -28,7 +28,8 @@ const createStaffAccount = async (req, res) => {
     const body = req.body || {};
     const { isValid, errors } = validateCreateStaff(body);
     if (!isValid) {
-      return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+      const firstErrorMessage = Object.values(errors)[0] || 'Dữ liệu không hợp lệ';
+      return res.status(400).json({ message: firstErrorMessage, errors });
     }
 
     const user = await adminService.createStaffAccount(body);
@@ -43,7 +44,8 @@ const updateUserByAdmin = async (req, res) => {
     const body = req.body || {};
     const { isValid, errors } = validateUpdateUserByAdmin(body);
     if (!isValid) {
-      return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+      const firstErrorMessage = Object.values(errors)[0] || 'Dữ liệu không hợp lệ';
+      return res.status(400).json({ message: firstErrorMessage, errors });
     }
 
     const user = await adminService.updateUserByAdmin(req.params.id, body);
@@ -58,7 +60,8 @@ const updateUserStatus = async (req, res) => {
     const body = req.body || {};
     const { isValid, errors } = validateUpdateUserStatus(body);
     if (!isValid) {
-      return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+      const firstErrorMessage = Object.values(errors)[0] || 'Dữ liệu không hợp lệ';
+      return res.status(400).json({ message: firstErrorMessage, errors });
     }
 
     const user = await adminService.updateUserStatus(req.user.id, req.params.id, body.status);

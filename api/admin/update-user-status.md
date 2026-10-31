@@ -1,6 +1,6 @@
-# API Documentation: Lock / Unlock / Change User Status (Admin - UC-62, BR-22)
+# API Documentation: Lock / Unlock User Account (Admin - UC-62, BR-22)
 
-Lock, unlock, or deactivate a user/staff account (`Active`, `Locked`, `Inactive`). Locked or Inactive accounts are blocked from logging in (`403`). An Admin cannot lock or deactivate their own account.
+Lock or unlock a user/staff account (`Active` or `Locked`). Locked accounts are blocked from logging in (`403`). An Admin cannot lock their own account, and `Inactive` is not allowed on this endpoint.
 
 ## Endpoint
 
@@ -15,7 +15,7 @@ Lock, unlock, or deactivate a user/staff account (`Active`, `Locked`, `Inactive`
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `status` | string | Yes | Target status: `Active`, `Locked`, or `Inactive`. |
+| `status` | string | Yes | Target status: `Active` or `Locked`. |
 
 **Example**
 
@@ -51,13 +51,13 @@ Lock, unlock, or deactivate a user/staff account (`Active`, `Locked`, `Inactive`
 {
   "message": "Dữ liệu không hợp lệ",
   "errors": {
-    "status": "Trạng thái chỉ được là Active, Inactive hoặc Locked"
+    "status": "Trạng thái chỉ được là Active hoặc Locked"
   }
 }
 ```
 
 ```json
-{ "message": "Không thể tự khóa hoặc vô hiệu hóa tài khoản của chính mình" }
+{ "message": "Không thể tự khóa tài khoản của chính mình" }
 ```
 
 ### 404 Not Found

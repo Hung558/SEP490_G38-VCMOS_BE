@@ -235,6 +235,15 @@ describe('Admin Account Management (/api/admin/users - SCR-32, UC-60/61/62, BR-2
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ status: 'Locked' });
     expect(selfLock.status).toBe(400);
+
+    // 4. Chặn truyền status = Inactive (Admin chỉ được Active hoặc Locked)
+    const inactiveAttempt = await request(app)
+      .patch(`/api/admin/users/${createdStaffId}/status`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'Inactive' });
+    expect(inactiveAttempt.status).toBe(400);
+    expect(inactiveAttempt.body.message).toBe('Trạng thái chỉ được là Active hoặc Locked');
+    expect(inactiveAttempt.body.errors.status).toBe('Trạng thái chỉ được là Active hoặc Locked');
   });
 
   test('DELETE /api/admin/users/:id (BR-22): cấm xóa vật lý tài khoản người dùng', async () => {
