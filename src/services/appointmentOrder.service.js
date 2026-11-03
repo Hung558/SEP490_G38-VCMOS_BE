@@ -1,6 +1,8 @@
 const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Pet = require('../models/Pet');
+const User = require('../models/User');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
@@ -23,13 +25,115 @@ const generateAppointmentCode = () => {
 const isDuplicateCodeError = (err) =>
   err?.code === 11000 && (err.keyPattern?.code || err.message?.includes('code'));
 
+const escapeHtml = (str = '') =>
+  String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const sendNewAppointmentEmail = async (recipients, { appointment, ownerName, ownerPhone, petName }) => {
+  const emailUser = process.env.EMAIL_USER;
+  const emailPass = process.env.EMAIL_PASS;
+  const subjectTitle = 'lịch hẹn online mới';
+
+  if (!emailUser || !emailPass || process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV !== 'test') {
+      console.log(
+        `[DEV EMAIL APPOINTMENT - ${subjectTitle}] Gửi tới ${recipients.join(', ')} - Mã lịch hẹn: ${appointment.code}`
+      );
+    }
+    return false;
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: emailUser, pass: emailPass },
+  });
+
+  const row = (label, value) => `
+    <tr>
+      <td style="padding: 6px 0; color: #64748b; width: 120px;">${label}</td>
+      <td style="padding: 6px 0; font-weight: bold; color: #0f766e;">${escapeHtml(value || '—')}</td>
+    </tr>`;
+
+  await transporter.sendMail({
+    from: `"VCMOS Veterinary Clinic" <${emailUser}>`,
+    to: emailUser,        // BCC all receptionists so their addresses aren't exposed to each other
+    bcc: recipients,
+    subject: `[VCMOS] Có ${subjectTitle} ${appointment.code}`,
+    text:
+      `Có ${subjectTitle} tại VCMOS. Mã: ${appointment.code}. Ngày hẹn: ${appointment.date}. ` +
+      `Chủ nuôi: ${ownerName || '—'} (${ownerPhone || '—'}). Thú cưng: ${petName || '—'}. ` +
+      `Ghi chú: ${appointment.note || '—'}.`,
+    html: `
+      <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 32px 16px;">
+        <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
+          <div style="background-color: #0d9488; padding: 24px; text-align: center; color: #ffffff;">
+            <div style="font-size: 28px; margin-bottom: 4px;">🐾</div>
+            <h2 style="margin: 0; font-size: 20px; letter-spacing: 0.5px;">PHÒNG KHÁM THÚ Y VCMOS</h2>
+            <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.9;">Hệ thống Quản lý & Chăm sóc Thú cưng</p>
+          </div>
+          <div style="padding: 28px 24px; color: #1e293b; line-height: 1.6;">
+            <p style="margin-top: 0;">Xin chào,</p>
+            <p>Vừa có một <strong>${subjectTitle}</strong> được tạo tại <strong>Phòng khám Thú y VCMOS</strong>. Thông tin chi tiết như sau:</p>
+            <div style="margin: 24px 0; padding: 18px; background-color: #f0fdfa; border: 2px dashed #0d9488; border-radius: 10px; text-align: center;">
+              <span style="font-size: 28px; font-weight: bold; letter-spacing: 4px; color: #0f766e;">${escapeHtml(appointment.code)}</span>
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+              ${row('Ngày hẹn', appointment.date)}
+              ${row('Chủ nuôi', ownerName)}
+              ${row('Số điện thoại', ownerPhone)}
+              ${row('Thú cưng', petName)}
+              ${row('Ghi chú', appointment.note)}
+            </table>
+            <p style="font-size: 13.5px; color: #64748b; margin-bottom: 0; margin-top: 20px;">
+              📋 Vui lòng kiểm tra và chuẩn bị tiếp nhận khi khách đến phòng khám.
+            </p>
+          </div>
+          <div style="background-color: #f8fafc; padding: 14px 24px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
+            Đây là email tự động từ hệ thống, vui lòng không trả lời.<br/>
+            © VCMOS Veterinary Clinic Management System
+          </div>
+        </div>
+      </div>
+    `,
+  });
+
+  return true;
+};
+
+const notifyReceptionistsOfNewAppointment = async (appointment, pet) => {
+  try {
+    const [receptionists, owner] = await Promise.all([
+      User.find({ role: 'Receptionist', status: 'Active', email: { $type: 'string' } })
+        .select('email')
+        .lean(),
+      User.findById(appointment.ownerId).select('fullName phone').lean(),
+    ]);
+
+    const recipients = receptionists.map((r) => r.email);
+    if (recipients.length === 0) return;
+
+    await sendNewAppointmentEmail(recipients, {
+      appointment,
+      ownerName: owner?.fullName,
+      ownerPhone: owner?.phone,
+      petName: pet?.name,
+    });
+  } catch (err) {
+    console.error('[Appointment] Gửi email thông báo cho lễ tân thất bại:', err.message);
+  }
+};
+
 /**
  * Create an online appointment for the logged-in owner.
  * ownerId comes from the token (never from the request body).
  */
 const createOnlineAppointment = async (ownerId, { petId, date, note }) => {
   // 1. The pet must exist and belong to the current user
-  const pet = await Pet.findOne({ _id: petId, ownerId }).select('_id').lean();
+  const pet = await Pet.findOne({ _id: petId, ownerId }).select('_id name').lean();
   if (!pet) {
     throw createError(404, 'Không tìm thấy thú cưng');
   }
@@ -47,7 +151,7 @@ const createOnlineAppointment = async (ownerId, { petId, date, note }) => {
   // 3. Create with a random code; retry on the (rare) unique-code collision
   for (let attempt = 0; attempt < MAX_CODE_RETRIES; attempt++) {
     try {
-      return await AppointmentOrder.create({
+      const appointment = await AppointmentOrder.create({
         code: generateAppointmentCode(),
         petId,
         ownerId,
@@ -57,6 +161,8 @@ const createOnlineAppointment = async (ownerId, { petId, date, note }) => {
         checkedInAt: null,
         // derivedStatus falls back to the schema default: 'Booked'
       });
+      notifyReceptionistsOfNewAppointment(appointment, pet);
+      return appointment;
     } catch (err) {
       if (isDuplicateCodeError(err)) continue;
       throw err;

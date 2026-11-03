@@ -3,11 +3,15 @@
  */
 const crypto = require('crypto');
 
+jest.mock('nodemailer');
 jest.mock('../../src/models/AppointmentOrder');
 jest.mock('../../src/models/Pet');
+jest.mock('../../src/models/User');
 
+const nodemailer = require('nodemailer');
 const AppointmentOrder = require('../../src/models/AppointmentOrder');
 const Pet = require('../../src/models/Pet');
+const User = require('../../src/models/User');
 const service = require('../../src/services/appointmentOrder.service');
 
 // ---------- helpers ----------
@@ -37,6 +41,37 @@ const mockAppointmentFindOne = (result) => {
   return { lean };
 };
 
+/** User.find(...).select(...).lean() chain (receptionist lookup) */
+const mockReceptionists = (receptionists) => {
+  const lean = jest.fn().mockResolvedValue(receptionists);
+  const select = jest.fn().mockReturnValue({ lean });
+  User.find.mockReturnValue({ select });
+  return { select, lean };
+};
+
+/** User.findById(...).select(...).lean() chain (owner lookup) */
+const mockOwner = (owner) => {
+  const lean = jest.fn().mockResolvedValue(owner);
+  const select = jest.fn().mockReturnValue({ lean });
+  User.findById.mockReturnValue({ select });
+  return { select, lean };
+};
+
+/**
+ * The notification is fire-and-forget (not awaited by the service),
+ * so tests must let pending promises settle before asserting on it.
+ */
+const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
+
+const mockSendMail = jest.fn();
+
+/** Make sendNewAppointmentEmail go through the real nodemailer path instead of the dev/test early return. */
+const enableRealEmail = () => {
+  process.env.NODE_ENV = 'development';
+  process.env.EMAIL_USER = 'clinic@gmail.com';
+  process.env.EMAIL_PASS = 'app-password';
+};
+
 const duplicateCodeError = () => {
   const err = new Error('E11000 duplicate key error');
   err.code = 11000;
@@ -47,12 +82,25 @@ const duplicateCodeError = () => {
 const OWNER_ID = 'owner-1';
 const PET_ID = 'pet-1';
 
+const ORIGINAL_ENV = { ...process.env };
+
 beforeEach(() => {
   jest.clearAllMocks();
+
+  // Sensible defaults so tests that don't care about email never hit real lookups
+  mockReceptionists([]);
+  mockOwner({ fullName: 'Nguyễn Văn A', phone: '0901234567' });
+  mockSendMail.mockResolvedValue({});
+  nodemailer.createTransport.mockReturnValue({ sendMail: mockSendMail });
+
+  // Keep test output clean; individual tests assert on these when relevant
+  jest.spyOn(console, 'log').mockImplementation(() => {});
+  jest.spyOn(console, 'error').mockImplementation(() => {});
 });
 
 afterEach(() => {
   jest.restoreAllMocks();
+  process.env = { ...ORIGINAL_ENV };
 });
 
 // ---------- createOnlineAppointment ----------
@@ -74,14 +122,14 @@ describe('createOnlineAppointment', () => {
       expect(AppointmentOrder.create).not.toHaveBeenCalled();
     });
 
-    it('only selects _id of the pet', async () => {
-      const { select } = mockPetFindOne({ _id: PET_ID });
+    it('only selects _id and name of the pet (name is needed for the notification email)', async () => {
+      const { select } = mockPetFindOne({ _id: PET_ID, name: 'Milu' });
       AppointmentOrder.exists.mockResolvedValue(null);
       AppointmentOrder.create.mockResolvedValue({});
 
       await service.createOnlineAppointment(OWNER_ID, input);
 
-      expect(select).toHaveBeenCalledWith('_id');
+      expect(select).toHaveBeenCalledWith('_id name');
     });
   });
 
@@ -270,6 +318,290 @@ describe('createOnlineAppointment', () => {
 
       await expect(service.createOnlineAppointment(OWNER_ID, input)).rejects.toBe(err);
       expect(AppointmentOrder.create).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+// ---------- receptionist notification (called from createOnlineAppointment) ----------
+
+describe('createOnlineAppointment - receptionist notification', () => {
+  const input = { petId: PET_ID, date: '2026-11-10', note: 'Tiêm phòng' };
+  const created = {
+    _id: 'apt-1',
+    code: 'APT-K7M2QX',
+    ownerId: OWNER_ID,
+    petId: PET_ID,
+    date: input.date,
+    note: input.note,
+  };
+  const receptionists = [{ email: 'le.tan1@vcmos.vn' }, { email: 'le.tan2@vcmos.vn' }];
+
+  beforeEach(() => {
+    mockPetFindOne({ _id: PET_ID, name: 'Milu' });
+    AppointmentOrder.exists.mockResolvedValue(null);
+    AppointmentOrder.create.mockResolvedValue(created);
+    mockReceptionists(receptionists);
+    enableRealEmail();
+  });
+
+  describe('recipient lookup', () => {
+    it('looks up only active receptionists that have an email, selecting just the email', async () => {
+      const { select } = mockReceptionists(receptionists);
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(User.find).toHaveBeenCalledTimes(1);
+      expect(User.find).toHaveBeenCalledWith({
+        role: 'Receptionist',
+        status: 'Active',
+        email: { $type: 'string' },
+      });
+      expect(select).toHaveBeenCalledWith('email');
+    });
+
+    it('loads the owner (from the created appointment) to get name and phone', async () => {
+      const { select } = mockOwner({ fullName: 'Nguyễn Văn A', phone: '0901234567' });
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(User.findById).toHaveBeenCalledWith(OWNER_ID);
+      expect(select).toHaveBeenCalledWith('fullName phone');
+    });
+
+    it('does not send anything when there are no receptionists', async () => {
+      mockReceptionists([]);
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(nodemailer.createTransport).not.toHaveBeenCalled();
+      expect(mockSendMail).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('email content', () => {
+    it('creates a Gmail transport with credentials from the environment', async () => {
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(nodemailer.createTransport).toHaveBeenCalledWith({
+        service: 'gmail',
+        auth: { user: 'clinic@gmail.com', pass: 'app-password' },
+      });
+    });
+
+    it('sends a single email with all receptionists in BCC (addresses are not exposed to each other)', async () => {
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(mockSendMail).toHaveBeenCalledTimes(1);
+      const mail = mockSendMail.mock.calls[0][0];
+      expect(mail.from).toBe('"VCMOS Veterinary Clinic" <clinic@gmail.com>');
+      expect(mail.to).toBe('clinic@gmail.com');
+      expect(mail.bcc).toEqual(['le.tan1@vcmos.vn', 'le.tan2@vcmos.vn']);
+    });
+
+    it('puts the appointment code in the subject', async () => {
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(mockSendMail.mock.calls[0][0].subject).toBe('[VCMOS] Có lịch hẹn online mới APT-K7M2QX');
+    });
+
+    it('includes appointment, owner and pet details in the plain-text body', async () => {
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      const { text } = mockSendMail.mock.calls[0][0];
+      expect(text).toContain('APT-K7M2QX');
+      expect(text).toContain('2026-11-10');
+      expect(text).toContain('Nguyễn Văn A');
+      expect(text).toContain('0901234567');
+      expect(text).toContain('Milu');
+      expect(text).toContain('Tiêm phòng');
+    });
+
+    it('includes appointment, owner and pet details in the HTML body using the clinic layout', async () => {
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      const { html } = mockSendMail.mock.calls[0][0];
+      expect(html).toContain('PHÒNG KHÁM THÚ Y VCMOS'); // same header as the OTP email
+      expect(html).toContain('APT-K7M2QX');
+      expect(html).toContain('2026-11-10');
+      expect(html).toContain('Nguyễn Văn A');
+      expect(html).toContain('0901234567');
+      expect(html).toContain('Milu');
+      expect(html).toContain('Tiêm phòng');
+    });
+
+    it('escapes HTML in user-provided fields to prevent injection', async () => {
+      AppointmentOrder.create.mockResolvedValue({
+        ...created,
+        note: '<script>alert("x")</script> & "quote"',
+      });
+      mockOwner({ fullName: '<b>Hacker</b>', phone: '0901234567' });
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      const { html } = mockSendMail.mock.calls[0][0];
+      expect(html).not.toContain('<script>');
+      expect(html).not.toContain('<b>Hacker</b>');
+      expect(html).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &quot;quote&quot;');
+      expect(html).toContain('&lt;b&gt;Hacker&lt;/b&gt;');
+    });
+
+    it('shows "—" for missing optional values (no note, unknown owner, pet without name)', async () => {
+      mockPetFindOne({ _id: PET_ID }); // no name
+      AppointmentOrder.create.mockResolvedValue({ ...created, note: undefined });
+      mockOwner(null);
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      const { text, html } = mockSendMail.mock.calls[0][0];
+      expect(text).toContain('Chủ nuôi: — (—)');
+      expect(text).toContain('Thú cưng: —');
+      expect(text).toContain('Ghi chú: —');
+      // Ngày hẹn is always present; the 4 other rows fall back to the dash
+      expect((html.match(/>—</g) || []).length).toBe(4);
+    });
+  });
+
+  describe('environment handling (same behaviour as sendOtpEmail)', () => {
+    it('logs to the console instead of sending when EMAIL_USER / EMAIL_PASS are not configured', async () => {
+      delete process.env.EMAIL_USER;
+      delete process.env.EMAIL_PASS;
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(nodemailer.createTransport).not.toHaveBeenCalled();
+      expect(mockSendMail).not.toHaveBeenCalled();
+      expect(console.log).toHaveBeenCalledTimes(1);
+      const logLine = console.log.mock.calls[0][0];
+      expect(logLine).toContain('[DEV EMAIL APPOINTMENT');
+      expect(logLine).toContain('le.tan1@vcmos.vn, le.tan2@vcmos.vn');
+      expect(logLine).toContain('APT-K7M2QX');
+    });
+
+    it('does not send or log anything when NODE_ENV is "test", even with credentials', async () => {
+      process.env.NODE_ENV = 'test';
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(nodemailer.createTransport).not.toHaveBeenCalled();
+      expect(mockSendMail).not.toHaveBeenCalled();
+      expect(console.log).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('failure isolation', () => {
+    it('returns the created appointment without waiting for the email to be sent', async () => {
+      mockSendMail.mockReturnValue(new Promise(() => {})); // never resolves
+
+      const result = await service.createOnlineAppointment(OWNER_ID, input);
+
+      expect(result).toBe(created);
+    });
+
+    it('still returns the appointment and logs an error when sending the email fails', async () => {
+      mockSendMail.mockRejectedValue(new Error('SMTP down'));
+
+      const result = await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(result).toBe(created);
+      expect(console.error).toHaveBeenCalledWith(
+        '[Appointment] Gửi email thông báo cho lễ tân thất bại:',
+        'SMTP down'
+      );
+    });
+
+    it('still returns the appointment when the receptionist lookup fails', async () => {
+      const lean = jest.fn().mockRejectedValue(new Error('db down'));
+      User.find.mockReturnValue({ select: jest.fn().mockReturnValue({ lean }) });
+
+      const result = await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(result).toBe(created);
+      expect(mockSendMail).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalledWith(
+        '[Appointment] Gửi email thông báo cho lễ tân thất bại:',
+        'db down'
+      );
+    });
+
+    it('still returns the appointment when the owner lookup fails', async () => {
+      const lean = jest.fn().mockRejectedValue(new Error('owner lookup failed'));
+      User.findById.mockReturnValue({ select: jest.fn().mockReturnValue({ lean }) });
+
+      const result = await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(result).toBe(created);
+      expect(mockSendMail).not.toHaveBeenCalled();
+      expect(console.error).toHaveBeenCalled();
+    });
+  });
+
+  describe('when no notification should be sent', () => {
+    it('does not notify when the pet is not found', async () => {
+      mockPetFindOne(null);
+
+      await expect(service.createOnlineAppointment(OWNER_ID, input)).rejects.toMatchObject({ status: 404 });
+      await flushPromises();
+
+      expect(User.find).not.toHaveBeenCalled();
+      expect(mockSendMail).not.toHaveBeenCalled();
+    });
+
+    it('does not notify when the slot is already booked (409)', async () => {
+      AppointmentOrder.exists.mockResolvedValue({ _id: 'existing' });
+
+      await expect(service.createOnlineAppointment(OWNER_ID, input)).rejects.toMatchObject({ status: 409 });
+      await flushPromises();
+
+      expect(User.find).not.toHaveBeenCalled();
+      expect(mockSendMail).not.toHaveBeenCalled();
+    });
+
+    it('does not notify when creation fails with a non-duplicate error', async () => {
+      AppointmentOrder.create.mockRejectedValue(new Error('connection lost'));
+
+      await expect(service.createOnlineAppointment(OWNER_ID, input)).rejects.toThrow('connection lost');
+      await flushPromises();
+
+      expect(User.find).not.toHaveBeenCalled();
+      expect(mockSendMail).not.toHaveBeenCalled();
+    });
+
+    it('does not notify when all code retries are exhausted (500)', async () => {
+      AppointmentOrder.create.mockRejectedValue(duplicateCodeError());
+
+      await expect(service.createOnlineAppointment(OWNER_ID, input)).rejects.toMatchObject({ status: 500 });
+      await flushPromises();
+
+      expect(User.find).not.toHaveBeenCalled();
+      expect(mockSendMail).not.toHaveBeenCalled();
+    });
+
+    it('notifies exactly once when creation succeeds after code collisions', async () => {
+      AppointmentOrder.create
+        .mockRejectedValueOnce(duplicateCodeError())
+        .mockRejectedValueOnce(duplicateCodeError())
+        .mockResolvedValueOnce(created);
+
+      await service.createOnlineAppointment(OWNER_ID, input);
+      await flushPromises();
+
+      expect(AppointmentOrder.create).toHaveBeenCalledTimes(3);
+      expect(mockSendMail).toHaveBeenCalledTimes(1);
     });
   });
 });
