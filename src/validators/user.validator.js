@@ -9,6 +9,11 @@ const {
 
 const OTP_REGEX = /^\d{6}$/;
 
+const STAFF_ROLES = ['Veterinarian', 'Groomer'];
+const USER_STATUSES = ['Active', 'Inactive', 'Locked'];
+const MAX_PAGE_SIZE = 100;
+const MAX_SEARCH = 100;
+
 const validatePasswordValue = (password) => {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD) {
     return `Mật khẩu phải có ít nhất ${MIN_PASSWORD} ký tự`;
@@ -90,11 +95,33 @@ const validateChangeMyPassword = ({ otp, currentPassword, newPassword } = {}) =>
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
+const validateListStaff = ({ role, status, search, page, limit } = {}) => {
+  const errors = {};
+
+  if (role !== undefined && !STAFF_ROLES.includes(role)) {
+    errors.role = `Vai trò phải là một trong: ${STAFF_ROLES.join(', ')}`;
+  }
+  if (status !== undefined && !USER_STATUSES.includes(status)) {
+    errors.status = `Trạng thái phải là một trong: ${USER_STATUSES.join(', ')}`;
+  }
+  if (search !== undefined && (typeof search !== 'string' || search.trim().length > MAX_SEARCH)) {
+    errors.search = `Từ khoá tìm kiếm không được vượt quá ${MAX_SEARCH} ký tự`;
+  }
+  if (page !== undefined && !/^\d+$/.test(page)) errors.page = 'page phải là số nguyên dương';
+  else if (page !== undefined && Number(page) < 1) errors.page = 'page phải là số nguyên dương';
+
+  if (limit !== undefined && (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > MAX_PAGE_SIZE)) {
+    errors.limit = `limit phải từ 1 đến ${MAX_PAGE_SIZE}`;
+  }
+
+  return { isValid: Object.keys(errors).length === 0, errors };
+};
+
 module.exports = {
   validateUpdateMyProfile,
   validateVerifyMyEmail,
   validateForgotPassword,
   validateResetPassword,
   validateChangeMyPassword,
+  validateListStaff
 };
-

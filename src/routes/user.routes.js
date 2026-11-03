@@ -18,5 +18,6 @@ router.put('/me/password', protect, userController.changeMyPassword);
 router.post('/forgot-password', userController.forgotPassword);
 router.post('/reset-password', userController.resetPassword);
 
-module.exports = router;
+router.get('/staff', protect, userController.listStaff);
 
+module.exports = router;
