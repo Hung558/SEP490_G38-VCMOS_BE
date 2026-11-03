@@ -15,6 +15,12 @@ const httpError = (statusCode, message) => {
 // Chỉ lấy các field được phép hiển thị (passwordHash và OTP đã có select: false trong model)
 const PROFILE_FIELDS = 'code fullName phone email isEmailVerified role status createdAt';
 
+const STAFF_ROLES = ['Veterinarian', 'Groomer'];
+// Không trả email/passwordHash/OTP; chỉ thông tin cần để hiển thị/chọn nhân viên
+const STAFF_FIELDS = 'code fullName role status';
+
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 // Gửi email OTP thật nếu đã cấu hình EMAIL_USER và EMAIL_PASS,
 // ngược lại (môi trường dev/test chưa cấu hình Gmail) thì in ra console và báo chưa gửi mail thật.
 const sendOtpEmail = async (toEmail, otp, purposeTitle = 'xác thực địa chỉ email') => {
@@ -277,6 +283,32 @@ const changeMyPassword = async (userId, currentPassword, newPassword, otp) => {
   });
 };
 
+// Danh sách nhân viên (Veterinarian, Groomer) có phân trang, lọc theo role/status, tìm theo tên/mã/SĐT
+const listStaff = async ({ role, status = 'Active', search, page = 1, limit = 10 }) => {
+  const filter = {
+    role: role || { $in: STAFF_ROLES },
+    status,
+  };
+
+  const keyword = typeof search === 'string' ? search.trim() : '';
+  if (keyword) {
+    const regex = new RegExp(escapeRegex(keyword), 'i');
+    filter.$or = [{ fullName: regex }, { code: regex }, { phone: regex }];
+  }
+
+  const skip = (page - 1) * limit;
+
+  const [items, total] = await Promise.all([
+    User.find(filter).select(STAFF_FIELDS).sort({ fullName: 1, _id: 1 }).skip(skip).limit(limit).lean(),
+    User.countDocuments(filter),
+  ]);
+
+  return {
+    items,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+};
+
 module.exports = {
   getMyProfile,
   updateMyProfile,
@@ -286,5 +318,5 @@ module.exports = {
   resetPassword,
   sendChangePasswordOtp,
   changeMyPassword,
+  listStaff
 };
-

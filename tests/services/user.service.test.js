@@ -19,6 +19,8 @@ jest.mock('../../src/models/User', () => ({
   findById: jest.fn(),
   findOne: jest.fn(),
   findByIdAndUpdate: jest.fn(),
+  find: jest.fn(),
+  countDocuments: jest.fn(),
 }));
 
 const crypto = require('crypto');
@@ -32,6 +34,8 @@ const userService = require('../../src/services/user.service');
 const USER_ID = 'user-1';
 const PROFILE_FIELDS = 'code fullName phone email isEmailVerified role status createdAt';
 const OTP_UNSET = { emailOtpHash: 1, emailOtpExpiresAt: 1 };
+const STAFF_FIELDS = 'code fullName role status';
+const DEFAULT_STAFF_FILTER = { role: { $in: ['Veterinarian', 'Groomer'] }, status: 'Active' };
 
 const minutesFromNow = (m) => new Date(Date.now() + m * 60 * 1000);
 
@@ -70,6 +74,26 @@ const duplicateError = (keyPattern) => {
   if (keyPattern) err.keyPattern = keyPattern;
   return err;
 };
+
+const mockStaffFind = (result = []) => {
+  const query = {
+    select: jest.fn().mockReturnThis(),
+    sort: jest.fn().mockReturnThis(),
+    skip: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    lean: jest.fn(),
+  };
+  if (result instanceof Error) query.lean.mockRejectedValue(result);
+  else query.lean.mockResolvedValue(result);
+  User.find.mockReturnValue(query);
+  return query;
+};
+
+const mockStaffCount = (total = 0) => {
+  if (total instanceof Error) User.countDocuments.mockRejectedValue(total);
+  else User.countDocuments.mockResolvedValue(total);
+};
+
 
 // Deterministic OTP generation: randomInt -> 123456, hash -> 'otp-hash'.
 const setupOtpGeneration = (otp = 123456) => {
@@ -776,5 +800,206 @@ describe('changeMyPassword', () => {
       $unset: OTP_UNSET,
     });
     expect(result).toBeUndefined();
+  });
+});
+
+/* ------------------------------- listStaff -------------------------------- */
+
+describe('listStaff', () => {
+  const getFilter = () => User.find.mock.calls[0][0];
+
+  describe('query construction', () => {
+    it('defaults to active Veterinarians and Groomers, page 1, 10 per page', async () => {
+      const query = mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({});
+
+      expect(User.find).toHaveBeenCalledWith(DEFAULT_STAFF_FILTER);
+      expect(query.skip).toHaveBeenCalledWith(0);
+      expect(query.limit).toHaveBeenCalledWith(10);
+    });
+
+    it('selects only the safe staff fields, sorts by name then _id, and uses lean()', async () => {
+      const query = mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({});
+
+      expect(query.select).toHaveBeenCalledWith(STAFF_FIELDS);
+      expect(query.sort).toHaveBeenCalledWith({ fullName: 1, _id: 1 });
+      expect(query.lean).toHaveBeenCalled();
+    });
+
+    it('counts documents with the same filter used for the page query', async () => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ role: 'Groomer', status: 'Locked', search: 'an' });
+
+      expect(User.countDocuments).toHaveBeenCalledTimes(1);
+      expect(User.countDocuments).toHaveBeenCalledWith(getFilter());
+    });
+
+    it('filters by a single role instead of the default staff roles', async () => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ role: 'Groomer' });
+
+      expect(getFilter()).toEqual({ role: 'Groomer', status: 'Active' });
+    });
+
+    it('filters by the given status instead of Active', async () => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ status: 'Locked' });
+
+      expect(getFilter()).toEqual({ ...DEFAULT_STAFF_FILTER, status: 'Locked' });
+    });
+  });
+
+  describe('search', () => {
+    it('matches fullName, code and phone with a trimmed, case-insensitive regex', async () => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ search: '  Nguyen ' });
+
+      const regex = /Nguyen/i;
+      expect(getFilter().$or).toEqual([{ fullName: regex }, { code: regex }, { phone: regex }]);
+      expect(getFilter().$or[0].fullName.flags).toBe('i');
+    });
+
+    it('keeps the role and status filters alongside the search', async () => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ role: 'Veterinarian', status: 'Active', search: 'an' });
+
+      expect(getFilter()).toMatchObject({ role: 'Veterinarian', status: 'Active' });
+      expect(getFilter().$or).toHaveLength(3);
+    });
+
+    it('escapes regex special characters so the keyword is matched literally', async () => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ search: 'a.b(c)*+?' });
+
+      const { fullName: regex } = getFilter().$or[0];
+      expect(regex.source).toBe('a\\.b\\(c\\)\\*\\+\\?');
+      expect(regex.test('a.b(c)*+?')).toBe(true);
+      expect(regex.test('aXb(c)*+?')).toBe(false); // '.' must not act as a wildcard
+    });
+
+    it.each([
+      ['an empty string', ''],
+      ['whitespace only', '   '],
+      ['undefined', undefined],
+      ['null', null],
+      ['a number', 123],
+      ['an object', { $ne: null }],
+    ])('adds no $or condition when search is %s', async (_label, search) => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ search });
+
+      expect(getFilter()).toEqual(DEFAULT_STAFF_FILTER);
+      expect(getFilter()).not.toHaveProperty('$or');
+    });
+  });
+
+  describe('pagination', () => {
+    it.each([
+      [1, 10, 0],
+      [2, 10, 10],
+      [3, 5, 10],
+      [4, 25, 75],
+    ])('page %i with limit %i skips %i documents', async (page, limit, expectedSkip) => {
+      const query = mockStaffFind([]);
+      mockStaffCount(0);
+
+      await userService.listStaff({ page, limit });
+
+      expect(query.skip).toHaveBeenCalledWith(expectedSkip);
+      expect(query.limit).toHaveBeenCalledWith(limit);
+    });
+
+    it.each([
+      [0, 10, 0],
+      [1, 10, 1],
+      [10, 10, 1],
+      [11, 10, 2],
+      [21, 10, 3],
+      [5, 2, 3],
+    ])('total %i with limit %i gives %i total page(s)', async (total, limit, totalPages) => {
+      mockStaffFind([]);
+      mockStaffCount(total);
+
+      const result = await userService.listStaff({ limit });
+
+      expect(result.pagination.totalPages).toBe(totalPages);
+    });
+
+    it('returns an empty page beyond the last page, with the correct pagination info', async () => {
+      mockStaffFind([]);
+      mockStaffCount(12);
+
+      const result = await userService.listStaff({ page: 5, limit: 10 });
+
+      expect(result).toEqual({
+        items: [],
+        pagination: { page: 5, limit: 10, total: 12, totalPages: 2 },
+      });
+    });
+  });
+
+  describe('result', () => {
+    it('returns the lean items together with pagination info', async () => {
+      const items = [
+        { _id: 'u1', code: 'VET001', fullName: 'An', role: 'Veterinarian', status: 'Active' },
+        { _id: 'u2', code: 'GRM001', fullName: 'Binh', role: 'Groomer', status: 'Active' },
+      ];
+      mockStaffFind(items);
+      mockStaffCount(12);
+
+      const result = await userService.listStaff({ page: 2, limit: 2 });
+
+      expect(result.items).toBe(items);
+      expect(result.pagination).toEqual({ page: 2, limit: 2, total: 12, totalPages: 6 });
+    });
+
+    it('returns an empty list and zero pages when nothing matches', async () => {
+      mockStaffFind([]);
+      mockStaffCount(0);
+
+      const result = await userService.listStaff({ search: 'zzz' });
+
+      expect(result).toEqual({
+        items: [],
+        pagination: { page: 1, limit: 10, total: 0, totalPages: 0 },
+      });
+    });
+  });
+
+  describe('error handling', () => {
+    it('propagates a failure from the page query', async () => {
+      const error = new Error('find failed');
+      mockStaffFind(error);
+      mockStaffCount(0);
+
+      await expect(userService.listStaff({})).rejects.toBe(error);
+    });
+
+    it('propagates a failure from the count query', async () => {
+      const error = new Error('count failed');
+      mockStaffFind([]);
+      mockStaffCount(error);
+
+      await expect(userService.listStaff({})).rejects.toBe(error);
+    });
   });
 });

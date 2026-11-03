@@ -111,8 +111,8 @@ This section lists the APIs involved in the MF-01 business flow. The detailed sp
 | # | API | Caller | Supports diagram step | API doc |
 |---|-----|--------|-----------------------|---------|
 | 1 | List my pets | Pet Owner | Select Pet & Services | [list-pets.md](../api/pets/list-pets.md) |
-| 2 | List services | Pet Owner | Select Pet & Services | [an-api-doc.md](../api/an-api-doc.md) |
-| 3 | List staff | Pet Owner | Select Date & Preferred Staff | [an-api-doc.md](../api/an-api-doc.md) |
+| 2 | List services | Pet Owner | Select Pet & Services | [list-services.md](../api/admin/service-management/list-services.md) |
+| 3 | List staff | Pet Owner | Select Date & Preferred Staff | [list-staff.md](../api/users/list-staff.md) |
 | 4 | Get available slots | Pet Owner | Display Available Slots | [an-api-doc.md](../api/an-api-doc.md) |
 | 5 | Create booking (order) | Pet Owner | Pick Slot & Enter Symptom Note, Click Submit Booking, Save Order | [an-api-doc.md](../api/an-api-doc.md) |
 | 6 | Notify receptionist | System | Notify Receptionist | [an-api-doc.md](../api/an-api-doc.md) |

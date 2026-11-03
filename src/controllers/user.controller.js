@@ -5,6 +5,7 @@ const {
   validateForgotPassword,
   validateResetPassword,
   validateChangeMyPassword,
+  validateListStaff
 } = require('../validators/user.validator');
 
 // Lấy id từ token (req.user do protect gán), không nhận id từ client để chống xem profile người khác
@@ -123,6 +124,28 @@ const changeMyPassword = async (req, res) => {
   }
 };
 
+const listStaff = async (req, res) => {
+  try {
+    const query = req.query || {};
+    const { isValid, errors } = validateListStaff(query);
+    if (!isValid) {
+      return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+    }
+
+    const result = await userService.listStaff({
+      role: query.role,
+      status: query.status,
+      search: query.search,
+      page: query.page ? Number(query.page) : undefined,
+      limit: query.limit ? Number(query.limit) : undefined,
+    });
+
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ message: err.message });
+  }
+};
+
 module.exports = {
   getMyProfile,
   updateMyProfile,
@@ -132,5 +155,5 @@ module.exports = {
   resetPassword,
   sendChangePasswordOtp,
   changeMyPassword,
+  listStaff
 };
-
