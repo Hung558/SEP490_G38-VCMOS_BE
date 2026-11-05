@@ -5,10 +5,17 @@ const controller = require('../controllers/appointmentOrder.controller');
 const router = express.Router();
 
 // Every route requires a logged-in user.
-router.use(protect, authorize('PetOwner'));
+router.use(protect);
 
-router.post('/online', controller.createOnlineBooking);
-router.get('/me', controller.listMyOnlineBooking);
-router.get('/me/:id', controller.getMyOnlineBookingById);
+// Pet owner routes
+router.post('/online', authorize('PetOwner'), controller.createOnlineBooking);
+router.get('/me', authorize('PetOwner'), controller.listMyOnlineBooking);
+router.get('/me/:id', authorize('PetOwner'), controller.getMyOnlineBookingById);
+
+// Admin / Receptionist routes
+router.get('/', authorize('Admin', 'Receptionist'), controller.listAllBooking);
+
+// Receptionist routes
+router.patch('/:id/check-in', authorize('Receptionist'), controller.checkInBooking);
 
 module.exports = router;

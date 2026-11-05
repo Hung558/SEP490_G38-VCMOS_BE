@@ -34,11 +34,38 @@ const mockAppointmentFind = (items) => {
   return { sort, skip, limit, lean };
 };
 
+/** AppointmentOrder.find(...).populate().populate().sort().skip().limit().lean() chain */
+const mockAppointmentFindPopulated = (items) => {
+  const lean = jest.fn().mockResolvedValue(items);
+  const limit = jest.fn().mockReturnValue({ lean });
+  const skip = jest.fn().mockReturnValue({ limit });
+  const sort = jest.fn().mockReturnValue({ skip });
+  const populateOwner = jest.fn().mockReturnValue({ sort });
+  const populatePet = jest.fn().mockReturnValue({ populate: populateOwner });
+  AppointmentOrder.find.mockReturnValue({ populate: populatePet });
+  return { populatePet, populateOwner, sort, skip, limit, lean };
+};
+
 /** AppointmentOrder.findOne(...).lean() chain */
 const mockAppointmentFindOne = (result) => {
   const lean = jest.fn().mockResolvedValue(result);
   AppointmentOrder.findOne.mockReturnValue({ lean });
   return { lean };
+};
+
+/** AppointmentOrder.findOneAndUpdate(...).lean() chain */
+const mockFindOneAndUpdate = (result) => {
+  const lean = jest.fn().mockResolvedValue(result);
+  AppointmentOrder.findOneAndUpdate.mockReturnValue({ lean });
+  return { lean };
+};
+
+/** AppointmentOrder.findById(...).select(...).lean() chain */
+const mockFindById = (result) => {
+  const lean = jest.fn().mockResolvedValue(result);
+  const select = jest.fn().mockReturnValue({ lean });
+  AppointmentOrder.findById.mockReturnValue({ select });
+  return { select, lean };
 };
 
 /** User.find(...).select(...).lean() chain (receptionist lookup) */
@@ -748,6 +775,281 @@ describe('listMyOnlineAppointments', () => {
   });
 });
 
+// ---------- listAllAppointments ----------
+
+describe('listAllAppointments', () => {
+  const setup = (items = [], total = 0) => {
+    const chain = mockAppointmentFindPopulated(items);
+    AppointmentOrder.countDocuments.mockResolvedValue(total);
+    return chain;
+  };
+
+  describe('default behaviour', () => {
+    it('works without any arguments and uses page 1, limit 10', async () => {
+      const chain = setup([{ _id: 'a1' }], 1);
+
+      const result = await service.listAllAppointments();
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({});
+      expect(chain.skip).toHaveBeenCalledWith(0);
+      expect(chain.limit).toHaveBeenCalledWith(10);
+      expect(result).toEqual({
+        items: [{ _id: 'a1' }],
+        pagination: { page: 1, limit: 10, total: 1, totalPages: 1 },
+      });
+    });
+
+    it('is not scoped to an owner or to online bookings when no filters are given', async () => {
+      setup();
+
+      await service.listAllAppointments({});
+
+      const filter = AppointmentOrder.find.mock.calls[0][0];
+      expect(filter).toEqual({});
+      expect(filter).not.toHaveProperty('ownerId');
+      expect(filter).not.toHaveProperty('isOnline');
+    });
+
+    it('uses the same filter for find and countDocuments', async () => {
+      setup();
+
+      await service.listAllAppointments({ status: 'Booked', isOnline: true });
+
+      const expected = { derivedStatus: 'Booked', isOnline: true };
+      expect(AppointmentOrder.find).toHaveBeenCalledWith(expected);
+      expect(AppointmentOrder.countDocuments).toHaveBeenCalledWith(expected);
+    });
+
+    it('returns plain objects (uses lean)', async () => {
+      const { lean } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(lean).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('populate and sorting', () => {
+    it('populates the pet with name only', async () => {
+      const { populatePet } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(populatePet).toHaveBeenCalledWith('petId', 'name');
+    });
+
+    it('populates the owner with fullName and phone', async () => {
+      const { populateOwner } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(populateOwner).toHaveBeenCalledWith('ownerId', 'fullName phone');
+    });
+
+    it('sorts by date then createdAt, newest first', async () => {
+      const { sort } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(sort).toHaveBeenCalledWith({ date: -1, createdAt: -1 });
+    });
+  });
+
+  describe('filters', () => {
+    it('adds the status filter on derivedStatus', async () => {
+      setup();
+
+      await service.listAllAppointments({ status: 'CheckedIn' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ derivedStatus: 'CheckedIn' });
+    });
+
+    it.each([true, false])('adds the isOnline filter when it is %s', async (isOnline) => {
+      setup();
+
+      await service.listAllAppointments({ isOnline });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ isOnline });
+    });
+
+    it('ignores isOnline when it is not a real boolean', async () => {
+      setup();
+
+      await service.listAllAppointments({ isOnline: 'true' });
+
+      expect(AppointmentOrder.find.mock.calls[0][0]).not.toHaveProperty('isOnline');
+    });
+
+    it('adds the ownerId filter', async () => {
+      setup();
+
+      await service.listAllAppointments({ ownerId: OWNER_ID });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ ownerId: OWNER_ID });
+    });
+
+    it('adds the petId filter', async () => {
+      setup();
+
+      await service.listAllAppointments({ petId: PET_ID });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ petId: PET_ID });
+    });
+
+    it('trims and uppercases the code before matching', async () => {
+      setup();
+
+      await service.listAllAppointments({ code: '  apt-k7m2qx ' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ code: 'APT-K7M2QX' });
+    });
+
+    it('applies both from and to as an inclusive date range', async () => {
+      setup();
+
+      await service.listAllAppointments({ from: '2026-11-01', to: '2026-11-30' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({
+        date: { $gte: '2026-11-01', $lte: '2026-11-30' },
+      });
+    });
+
+    it('applies only "from" when "to" is missing', async () => {
+      setup();
+
+      await service.listAllAppointments({ from: '2026-11-01' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ date: { $gte: '2026-11-01' } });
+    });
+
+    it('applies only "to" when "from" is missing', async () => {
+      setup();
+
+      await service.listAllAppointments({ to: '2026-11-30' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ date: { $lte: '2026-11-30' } });
+    });
+
+    it('does not add a date filter when neither from nor to is given', async () => {
+      setup();
+
+      await service.listAllAppointments({ status: 'Booked' });
+
+      expect(AppointmentOrder.find.mock.calls[0][0]).not.toHaveProperty('date');
+    });
+
+    it('combines all filters', async () => {
+      setup();
+
+      await service.listAllAppointments({
+        status: 'Done',
+        isOnline: false,
+        ownerId: OWNER_ID,
+        petId: PET_ID,
+        code: 'apt-abc234',
+        from: '2026-01-01',
+        to: '2026-12-31',
+      });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({
+        derivedStatus: 'Done',
+        isOnline: false,
+        ownerId: OWNER_ID,
+        petId: PET_ID,
+        code: 'APT-ABC234',
+        date: { $gte: '2026-01-01', $lte: '2026-12-31' },
+      });
+    });
+  });
+
+  describe('pagination', () => {
+    it('computes skip/limit and totalPages for custom pagination', async () => {
+      const chain = setup([{ _id: 'a1' }, { _id: 'a2' }], 23);
+
+      const result = await service.listAllAppointments({ page: 3, limit: 5 });
+
+      expect(chain.skip).toHaveBeenCalledWith(10);
+      expect(chain.limit).toHaveBeenCalledWith(5);
+      expect(result.pagination).toEqual({ page: 3, limit: 5, total: 23, totalPages: 5 });
+    });
+
+    it('accepts numeric strings for page and limit', async () => {
+      const chain = setup([], 50);
+
+      const result = await service.listAllAppointments({ page: '2', limit: '20' });
+
+      expect(chain.skip).toHaveBeenCalledWith(20);
+      expect(chain.limit).toHaveBeenCalledWith(20);
+      expect(result.pagination).toEqual({ page: 2, limit: 20, total: 50, totalPages: 3 });
+    });
+
+    it.each([0, -3, 'abc', null])('falls back to page 1 when page is %p', async (page) => {
+      const chain = setup();
+
+      const result = await service.listAllAppointments({ page });
+
+      expect(chain.skip).toHaveBeenCalledWith(0);
+      expect(result.pagination.page).toBe(1);
+    });
+
+    it.each([
+      [0, 10],
+      ['abc', 10],
+      [null, 10],
+      [-5, 1],
+      [500, 100],
+      [100, 100],
+    ])('normalizes limit %p to %p', async (limit, expected) => {
+      const chain = setup();
+
+      const result = await service.listAllAppointments({ limit });
+
+      expect(chain.limit).toHaveBeenCalledWith(expected);
+      expect(result.pagination.limit).toBe(expected);
+    });
+
+    it('returns totalPages 0 when there are no results', async () => {
+      setup([], 0);
+
+      const result = await service.listAllAppointments({});
+
+      expect(result.items).toEqual([]);
+      expect(result.pagination.totalPages).toBe(0);
+    });
+
+    it('rounds totalPages up for partial last pages', async () => {
+      setup([], 11);
+
+      const result = await service.listAllAppointments({ limit: 10 });
+
+      expect(result.pagination.totalPages).toBe(2);
+    });
+  });
+
+  describe('database errors', () => {
+    it('propagates errors from the find query', async () => {
+      const lean = jest.fn().mockRejectedValue(new Error('db down'));
+      const limit = jest.fn().mockReturnValue({ lean });
+      const skip = jest.fn().mockReturnValue({ limit });
+      const sort = jest.fn().mockReturnValue({ skip });
+      const populateOwner = jest.fn().mockReturnValue({ sort });
+      AppointmentOrder.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({ populate: populateOwner }),
+      });
+      AppointmentOrder.countDocuments.mockResolvedValue(0);
+
+      await expect(service.listAllAppointments({})).rejects.toThrow('db down');
+    });
+
+    it('propagates errors from countDocuments', async () => {
+      mockAppointmentFindPopulated([]);
+      AppointmentOrder.countDocuments.mockRejectedValue(new Error('count failed'));
+
+      await expect(service.listAllAppointments({})).rejects.toThrow('count failed');
+    });
+  });
+});
+
 // ---------- getMyOnlineAppointment ----------
 
 describe('getMyOnlineAppointment', () => {
@@ -779,5 +1081,160 @@ describe('getMyOnlineAppointment', () => {
     AppointmentOrder.findOne.mockReturnValue({ lean });
 
     await expect(service.getMyOnlineAppointment(OWNER_ID, 'bad-id')).rejects.toThrow('cast error');
+  });
+});
+
+// ---------- checkInAppointment ----------
+
+describe('checkInAppointment', () => {
+  const APPOINTMENT_ID = 'apt-1';
+
+  describe('successful check-in', () => {
+    it('returns the updated appointment', async () => {
+      const updated = { _id: APPOINTMENT_ID, derivedStatus: 'CheckedIn' };
+      mockFindOneAndUpdate(updated);
+
+      const result = await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(result).toBe(updated);
+    });
+
+    it('only updates an appointment that is currently "Booked" (atomic status check)', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledTimes(1);
+      expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: APPOINTMENT_ID, derivedStatus: 'Booked' },
+        { $set: { derivedStatus: 'CheckedIn', checkedInAt: expect.any(Date) } },
+        { new: true }
+      );
+    });
+
+    it('sets checkedInAt to the current time', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      const before = Date.now();
+      await service.checkInAppointment(APPOINTMENT_ID);
+      const after = Date.now();
+
+      const update = AppointmentOrder.findOneAndUpdate.mock.calls[0][1];
+      const checkedInAt = update.$set.checkedInAt.getTime();
+      expect(checkedInAt).toBeGreaterThanOrEqual(before);
+      expect(checkedInAt).toBeLessThanOrEqual(after);
+    });
+
+    it('returns a plain object (uses lean)', async () => {
+      const { lean } = mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(lean).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not run the follow-up lookup when the update succeeds', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(AppointmentOrder.findById).not.toHaveBeenCalled();
+    });
+
+    it('is not scoped to an owner or to online bookings (staff action)', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      const filter = AppointmentOrder.findOneAndUpdate.mock.calls[0][0];
+      expect(filter).not.toHaveProperty('ownerId');
+      expect(filter).not.toHaveProperty('isOnline');
+    });
+  });
+
+  describe('appointment not found', () => {
+    it('throws 404 when no appointment matches the id', async () => {
+      mockFindOneAndUpdate(null);
+      mockFindById(null);
+
+      await expect(service.checkInAppointment('missing')).rejects.toMatchObject({
+        status: 404,
+        message: 'Không tìm thấy lịch hẹn',
+      });
+    });
+
+    it('looks the appointment up by id, selecting only derivedStatus', async () => {
+      mockFindOneAndUpdate(null);
+      const { select } = mockFindById(null);
+
+      await expect(service.checkInAppointment('missing')).rejects.toMatchObject({ status: 404 });
+
+      expect(AppointmentOrder.findById).toHaveBeenCalledWith('missing');
+      expect(select).toHaveBeenCalledWith('derivedStatus');
+    });
+  });
+
+  describe('appointment not in "Booked" status', () => {
+    it.each(['CheckedIn', 'InProgress', 'WaitOwner', 'Done', 'Cancelled', 'Overdue'])(
+      'throws 409 including the current status when it is "%s"',
+      async (status) => {
+        mockFindOneAndUpdate(null);
+        mockFindById({ _id: APPOINTMENT_ID, derivedStatus: status });
+
+        await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toMatchObject({
+          status: 409,
+          message: `Không thể check-in lịch hẹn đang ở trạng thái "${status}"`,
+        });
+      }
+    );
+
+    it('does not modify the appointment when the status is not "Booked"', async () => {
+      mockFindOneAndUpdate(null);
+      mockFindById({ _id: APPOINTMENT_ID, derivedStatus: 'Done' });
+
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toMatchObject({ status: 409 });
+
+      // The only write attempted is the conditional update, which matched nothing
+      expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledTimes(1);
+      expect(AppointmentOrder.findOneAndUpdate.mock.calls[0][0]).toEqual({
+        _id: APPOINTMENT_ID,
+        derivedStatus: 'Booked',
+      });
+    });
+  });
+
+  describe('repeated / concurrent check-in', () => {
+    it('lets the first call succeed and rejects the second with 409', async () => {
+      AppointmentOrder.findOneAndUpdate
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({ _id: APPOINTMENT_ID, derivedStatus: 'CheckedIn' }) })
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) });
+      mockFindById({ _id: APPOINTMENT_ID, derivedStatus: 'CheckedIn' });
+
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).resolves.toMatchObject({
+        derivedStatus: 'CheckedIn',
+      });
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toMatchObject({
+        status: 409,
+        message: 'Không thể check-in lịch hẹn đang ở trạng thái "CheckedIn"',
+      });
+    });
+  });
+
+  describe('database errors', () => {
+    it('propagates errors thrown by the conditional update (e.g. cast error)', async () => {
+      const lean = jest.fn().mockRejectedValue(new Error('cast error'));
+      AppointmentOrder.findOneAndUpdate.mockReturnValue({ lean });
+
+      await expect(service.checkInAppointment('bad-id')).rejects.toThrow('cast error');
+      expect(AppointmentOrder.findById).not.toHaveBeenCalled();
+    });
+
+    it('propagates errors thrown by the follow-up lookup', async () => {
+      mockFindOneAndUpdate(null);
+      const lean = jest.fn().mockRejectedValue(new Error('db down'));
+      AppointmentOrder.findById.mockReturnValue({ select: jest.fn().mockReturnValue({ lean }) });
+
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toThrow('db down');
+    });
   });
 });
