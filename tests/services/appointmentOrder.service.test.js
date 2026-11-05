@@ -34,6 +34,18 @@ const mockAppointmentFind = (items) => {
   return { sort, skip, limit, lean };
 };
 
+/** AppointmentOrder.find(...).populate().populate().sort().skip().limit().lean() chain */
+const mockAppointmentFindPopulated = (items) => {
+  const lean = jest.fn().mockResolvedValue(items);
+  const limit = jest.fn().mockReturnValue({ lean });
+  const skip = jest.fn().mockReturnValue({ limit });
+  const sort = jest.fn().mockReturnValue({ skip });
+  const populateOwner = jest.fn().mockReturnValue({ sort });
+  const populatePet = jest.fn().mockReturnValue({ populate: populateOwner });
+  AppointmentOrder.find.mockReturnValue({ populate: populatePet });
+  return { populatePet, populateOwner, sort, skip, limit, lean };
+};
+
 /** AppointmentOrder.findOne(...).lean() chain */
 const mockAppointmentFindOne = (result) => {
   const lean = jest.fn().mockResolvedValue(result);
@@ -760,6 +772,281 @@ describe('listMyOnlineAppointments', () => {
     AppointmentOrder.countDocuments.mockResolvedValue(0);
 
     await expect(service.listMyOnlineAppointments(OWNER_ID, {})).rejects.toThrow('db down');
+  });
+});
+
+// ---------- listAllAppointments ----------
+
+describe('listAllAppointments', () => {
+  const setup = (items = [], total = 0) => {
+    const chain = mockAppointmentFindPopulated(items);
+    AppointmentOrder.countDocuments.mockResolvedValue(total);
+    return chain;
+  };
+
+  describe('default behaviour', () => {
+    it('works without any arguments and uses page 1, limit 10', async () => {
+      const chain = setup([{ _id: 'a1' }], 1);
+
+      const result = await service.listAllAppointments();
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({});
+      expect(chain.skip).toHaveBeenCalledWith(0);
+      expect(chain.limit).toHaveBeenCalledWith(10);
+      expect(result).toEqual({
+        items: [{ _id: 'a1' }],
+        pagination: { page: 1, limit: 10, total: 1, totalPages: 1 },
+      });
+    });
+
+    it('is not scoped to an owner or to online bookings when no filters are given', async () => {
+      setup();
+
+      await service.listAllAppointments({});
+
+      const filter = AppointmentOrder.find.mock.calls[0][0];
+      expect(filter).toEqual({});
+      expect(filter).not.toHaveProperty('ownerId');
+      expect(filter).not.toHaveProperty('isOnline');
+    });
+
+    it('uses the same filter for find and countDocuments', async () => {
+      setup();
+
+      await service.listAllAppointments({ status: 'Booked', isOnline: true });
+
+      const expected = { derivedStatus: 'Booked', isOnline: true };
+      expect(AppointmentOrder.find).toHaveBeenCalledWith(expected);
+      expect(AppointmentOrder.countDocuments).toHaveBeenCalledWith(expected);
+    });
+
+    it('returns plain objects (uses lean)', async () => {
+      const { lean } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(lean).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('populate and sorting', () => {
+    it('populates the pet with name only', async () => {
+      const { populatePet } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(populatePet).toHaveBeenCalledWith('petId', 'name');
+    });
+
+    it('populates the owner with fullName and phone', async () => {
+      const { populateOwner } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(populateOwner).toHaveBeenCalledWith('ownerId', 'fullName phone');
+    });
+
+    it('sorts by date then createdAt, newest first', async () => {
+      const { sort } = setup();
+
+      await service.listAllAppointments({});
+
+      expect(sort).toHaveBeenCalledWith({ date: -1, createdAt: -1 });
+    });
+  });
+
+  describe('filters', () => {
+    it('adds the status filter on derivedStatus', async () => {
+      setup();
+
+      await service.listAllAppointments({ status: 'CheckedIn' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ derivedStatus: 'CheckedIn' });
+    });
+
+    it.each([true, false])('adds the isOnline filter when it is %s', async (isOnline) => {
+      setup();
+
+      await service.listAllAppointments({ isOnline });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ isOnline });
+    });
+
+    it('ignores isOnline when it is not a real boolean', async () => {
+      setup();
+
+      await service.listAllAppointments({ isOnline: 'true' });
+
+      expect(AppointmentOrder.find.mock.calls[0][0]).not.toHaveProperty('isOnline');
+    });
+
+    it('adds the ownerId filter', async () => {
+      setup();
+
+      await service.listAllAppointments({ ownerId: OWNER_ID });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ ownerId: OWNER_ID });
+    });
+
+    it('adds the petId filter', async () => {
+      setup();
+
+      await service.listAllAppointments({ petId: PET_ID });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ petId: PET_ID });
+    });
+
+    it('trims and uppercases the code before matching', async () => {
+      setup();
+
+      await service.listAllAppointments({ code: '  apt-k7m2qx ' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ code: 'APT-K7M2QX' });
+    });
+
+    it('applies both from and to as an inclusive date range', async () => {
+      setup();
+
+      await service.listAllAppointments({ from: '2026-11-01', to: '2026-11-30' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({
+        date: { $gte: '2026-11-01', $lte: '2026-11-30' },
+      });
+    });
+
+    it('applies only "from" when "to" is missing', async () => {
+      setup();
+
+      await service.listAllAppointments({ from: '2026-11-01' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ date: { $gte: '2026-11-01' } });
+    });
+
+    it('applies only "to" when "from" is missing', async () => {
+      setup();
+
+      await service.listAllAppointments({ to: '2026-11-30' });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({ date: { $lte: '2026-11-30' } });
+    });
+
+    it('does not add a date filter when neither from nor to is given', async () => {
+      setup();
+
+      await service.listAllAppointments({ status: 'Booked' });
+
+      expect(AppointmentOrder.find.mock.calls[0][0]).not.toHaveProperty('date');
+    });
+
+    it('combines all filters', async () => {
+      setup();
+
+      await service.listAllAppointments({
+        status: 'Done',
+        isOnline: false,
+        ownerId: OWNER_ID,
+        petId: PET_ID,
+        code: 'apt-abc234',
+        from: '2026-01-01',
+        to: '2026-12-31',
+      });
+
+      expect(AppointmentOrder.find).toHaveBeenCalledWith({
+        derivedStatus: 'Done',
+        isOnline: false,
+        ownerId: OWNER_ID,
+        petId: PET_ID,
+        code: 'APT-ABC234',
+        date: { $gte: '2026-01-01', $lte: '2026-12-31' },
+      });
+    });
+  });
+
+  describe('pagination', () => {
+    it('computes skip/limit and totalPages for custom pagination', async () => {
+      const chain = setup([{ _id: 'a1' }, { _id: 'a2' }], 23);
+
+      const result = await service.listAllAppointments({ page: 3, limit: 5 });
+
+      expect(chain.skip).toHaveBeenCalledWith(10);
+      expect(chain.limit).toHaveBeenCalledWith(5);
+      expect(result.pagination).toEqual({ page: 3, limit: 5, total: 23, totalPages: 5 });
+    });
+
+    it('accepts numeric strings for page and limit', async () => {
+      const chain = setup([], 50);
+
+      const result = await service.listAllAppointments({ page: '2', limit: '20' });
+
+      expect(chain.skip).toHaveBeenCalledWith(20);
+      expect(chain.limit).toHaveBeenCalledWith(20);
+      expect(result.pagination).toEqual({ page: 2, limit: 20, total: 50, totalPages: 3 });
+    });
+
+    it.each([0, -3, 'abc', null])('falls back to page 1 when page is %p', async (page) => {
+      const chain = setup();
+
+      const result = await service.listAllAppointments({ page });
+
+      expect(chain.skip).toHaveBeenCalledWith(0);
+      expect(result.pagination.page).toBe(1);
+    });
+
+    it.each([
+      [0, 10],
+      ['abc', 10],
+      [null, 10],
+      [-5, 1],
+      [500, 100],
+      [100, 100],
+    ])('normalizes limit %p to %p', async (limit, expected) => {
+      const chain = setup();
+
+      const result = await service.listAllAppointments({ limit });
+
+      expect(chain.limit).toHaveBeenCalledWith(expected);
+      expect(result.pagination.limit).toBe(expected);
+    });
+
+    it('returns totalPages 0 when there are no results', async () => {
+      setup([], 0);
+
+      const result = await service.listAllAppointments({});
+
+      expect(result.items).toEqual([]);
+      expect(result.pagination.totalPages).toBe(0);
+    });
+
+    it('rounds totalPages up for partial last pages', async () => {
+      setup([], 11);
+
+      const result = await service.listAllAppointments({ limit: 10 });
+
+      expect(result.pagination.totalPages).toBe(2);
+    });
+  });
+
+  describe('database errors', () => {
+    it('propagates errors from the find query', async () => {
+      const lean = jest.fn().mockRejectedValue(new Error('db down'));
+      const limit = jest.fn().mockReturnValue({ lean });
+      const skip = jest.fn().mockReturnValue({ limit });
+      const sort = jest.fn().mockReturnValue({ skip });
+      const populateOwner = jest.fn().mockReturnValue({ sort });
+      AppointmentOrder.find.mockReturnValue({
+        populate: jest.fn().mockReturnValue({ populate: populateOwner }),
+      });
+      AppointmentOrder.countDocuments.mockResolvedValue(0);
+
+      await expect(service.listAllAppointments({})).rejects.toThrow('db down');
+    });
+
+    it('propagates errors from countDocuments', async () => {
+      mockAppointmentFindPopulated([]);
+      AppointmentOrder.countDocuments.mockRejectedValue(new Error('count failed'));
+
+      await expect(service.listAllAppointments({})).rejects.toThrow('count failed');
+    });
   });
 });
 

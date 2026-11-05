@@ -12,6 +12,9 @@ router.post('/online', authorize('PetOwner'), controller.createOnlineBooking);
 router.get('/me', authorize('PetOwner'), controller.listMyOnlineBooking);
 router.get('/me/:id', authorize('PetOwner'), controller.getMyOnlineBookingById);
 
+// Admin / Receptionist routes
+router.get('/', authorize('Admin', 'Receptionist'), controller.listAllBooking);
+
 // Receptionist routes
 router.patch('/:id/check-in', authorize('Receptionist'), controller.checkInBooking);
 

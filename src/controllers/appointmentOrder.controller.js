@@ -2,6 +2,7 @@ const appointmentService = require('../services/appointmentOrder.service');
 const {
   validateCreateOnlineAppointment,
   validateListOnlineAppointments,
+  validateListAllAppointments,
   validateAppointmentId,
 } = require('../validators/appointmentOrder.validator');
 
@@ -52,6 +53,18 @@ const getMyOnlineBookingById = async (req, res) => {
   }
 };
 
+const listAllBooking = async (req, res) => {
+  const { errors, value } = validateListAllAppointments(req.query);
+  if (errors.length) return sendValidationError(res, errors);
+
+  try {
+    const result = await appointmentService.listAllAppointments(value);
+    return res.json({ data: result.items, pagination: result.pagination });
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
 const checkInBooking = async (req, res) => {
   const { errors, value: id } = validateAppointmentId(req.params);
   if (errors.length) return sendValidationError(res, errors);
@@ -68,5 +81,6 @@ module.exports = {
   createOnlineBooking,
   listMyOnlineBooking,
   getMyOnlineBookingById,
+  listAllBooking,
   checkInBooking
 };

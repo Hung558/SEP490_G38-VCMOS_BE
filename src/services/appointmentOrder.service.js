@@ -205,6 +205,54 @@ const getMyOnlineAppointment = async (ownerId, id) => {
 };
 
 /**
+ * List all appointment orders (staff view, any owner, online and walk-in).
+ * Supports optional filters and pagination; newest date first.
+ */
+const listAllAppointments = async ({
+  status,
+  isOnline,
+  ownerId,
+  petId,
+  code,
+  from,
+  to,
+  page = 1,
+  limit = 10,
+} = {}) => {
+  page = Math.max(1, Number(page) || 1);
+  limit = Math.min(100, Math.max(1, Number(limit) || 10));
+
+  const filter = {};
+  if (status) filter.derivedStatus = status;
+  if (typeof isOnline === 'boolean') filter.isOnline = isOnline;
+  if (ownerId) filter.ownerId = ownerId;
+  if (petId) filter.petId = petId;
+  if (code) filter.code = String(code).trim().toUpperCase();
+  if (from || to) {
+    filter.date = {};
+    if (from) filter.date.$gte = from; // YYYY-MM-DD strings compare correctly
+    if (to) filter.date.$lte = to;
+  }
+
+  const skip = (page - 1) * limit;
+  const [items, total] = await Promise.all([
+    AppointmentOrder.find(filter)
+      .populate('petId', 'name')
+      .populate('ownerId', 'fullName phone')
+      .sort({ date: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    AppointmentOrder.countDocuments(filter),
+  ]);
+
+  return {
+    items,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+};
+
+/**
  * Only a 'Booked' appointment can be checked in. The status check and the update
  * happen in one atomic operation, so two concurrent check-ins can't both succeed.
  */
@@ -232,5 +280,6 @@ module.exports = {
   createOnlineAppointment,
   listMyOnlineAppointments,
   getMyOnlineAppointment,
+  listAllAppointments,
   checkInAppointment
 };
