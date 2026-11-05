@@ -41,6 +41,21 @@ const mockAppointmentFindOne = (result) => {
   return { lean };
 };
 
+/** AppointmentOrder.findOneAndUpdate(...).lean() chain */
+const mockFindOneAndUpdate = (result) => {
+  const lean = jest.fn().mockResolvedValue(result);
+  AppointmentOrder.findOneAndUpdate.mockReturnValue({ lean });
+  return { lean };
+};
+
+/** AppointmentOrder.findById(...).select(...).lean() chain */
+const mockFindById = (result) => {
+  const lean = jest.fn().mockResolvedValue(result);
+  const select = jest.fn().mockReturnValue({ lean });
+  AppointmentOrder.findById.mockReturnValue({ select });
+  return { select, lean };
+};
+
 /** User.find(...).select(...).lean() chain (receptionist lookup) */
 const mockReceptionists = (receptionists) => {
   const lean = jest.fn().mockResolvedValue(receptionists);
@@ -779,5 +794,160 @@ describe('getMyOnlineAppointment', () => {
     AppointmentOrder.findOne.mockReturnValue({ lean });
 
     await expect(service.getMyOnlineAppointment(OWNER_ID, 'bad-id')).rejects.toThrow('cast error');
+  });
+});
+
+// ---------- checkInAppointment ----------
+
+describe('checkInAppointment', () => {
+  const APPOINTMENT_ID = 'apt-1';
+
+  describe('successful check-in', () => {
+    it('returns the updated appointment', async () => {
+      const updated = { _id: APPOINTMENT_ID, derivedStatus: 'CheckedIn' };
+      mockFindOneAndUpdate(updated);
+
+      const result = await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(result).toBe(updated);
+    });
+
+    it('only updates an appointment that is currently "Booked" (atomic status check)', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledTimes(1);
+      expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: APPOINTMENT_ID, derivedStatus: 'Booked' },
+        { $set: { derivedStatus: 'CheckedIn', checkedInAt: expect.any(Date) } },
+        { new: true }
+      );
+    });
+
+    it('sets checkedInAt to the current time', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      const before = Date.now();
+      await service.checkInAppointment(APPOINTMENT_ID);
+      const after = Date.now();
+
+      const update = AppointmentOrder.findOneAndUpdate.mock.calls[0][1];
+      const checkedInAt = update.$set.checkedInAt.getTime();
+      expect(checkedInAt).toBeGreaterThanOrEqual(before);
+      expect(checkedInAt).toBeLessThanOrEqual(after);
+    });
+
+    it('returns a plain object (uses lean)', async () => {
+      const { lean } = mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(lean).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not run the follow-up lookup when the update succeeds', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      expect(AppointmentOrder.findById).not.toHaveBeenCalled();
+    });
+
+    it('is not scoped to an owner or to online bookings (staff action)', async () => {
+      mockFindOneAndUpdate({ _id: APPOINTMENT_ID });
+
+      await service.checkInAppointment(APPOINTMENT_ID);
+
+      const filter = AppointmentOrder.findOneAndUpdate.mock.calls[0][0];
+      expect(filter).not.toHaveProperty('ownerId');
+      expect(filter).not.toHaveProperty('isOnline');
+    });
+  });
+
+  describe('appointment not found', () => {
+    it('throws 404 when no appointment matches the id', async () => {
+      mockFindOneAndUpdate(null);
+      mockFindById(null);
+
+      await expect(service.checkInAppointment('missing')).rejects.toMatchObject({
+        status: 404,
+        message: 'Không tìm thấy lịch hẹn',
+      });
+    });
+
+    it('looks the appointment up by id, selecting only derivedStatus', async () => {
+      mockFindOneAndUpdate(null);
+      const { select } = mockFindById(null);
+
+      await expect(service.checkInAppointment('missing')).rejects.toMatchObject({ status: 404 });
+
+      expect(AppointmentOrder.findById).toHaveBeenCalledWith('missing');
+      expect(select).toHaveBeenCalledWith('derivedStatus');
+    });
+  });
+
+  describe('appointment not in "Booked" status', () => {
+    it.each(['CheckedIn', 'InProgress', 'WaitOwner', 'Done', 'Cancelled', 'Overdue'])(
+      'throws 409 including the current status when it is "%s"',
+      async (status) => {
+        mockFindOneAndUpdate(null);
+        mockFindById({ _id: APPOINTMENT_ID, derivedStatus: status });
+
+        await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toMatchObject({
+          status: 409,
+          message: `Không thể check-in lịch hẹn đang ở trạng thái "${status}"`,
+        });
+      }
+    );
+
+    it('does not modify the appointment when the status is not "Booked"', async () => {
+      mockFindOneAndUpdate(null);
+      mockFindById({ _id: APPOINTMENT_ID, derivedStatus: 'Done' });
+
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toMatchObject({ status: 409 });
+
+      // The only write attempted is the conditional update, which matched nothing
+      expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledTimes(1);
+      expect(AppointmentOrder.findOneAndUpdate.mock.calls[0][0]).toEqual({
+        _id: APPOINTMENT_ID,
+        derivedStatus: 'Booked',
+      });
+    });
+  });
+
+  describe('repeated / concurrent check-in', () => {
+    it('lets the first call succeed and rejects the second with 409', async () => {
+      AppointmentOrder.findOneAndUpdate
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue({ _id: APPOINTMENT_ID, derivedStatus: 'CheckedIn' }) })
+        .mockReturnValueOnce({ lean: jest.fn().mockResolvedValue(null) });
+      mockFindById({ _id: APPOINTMENT_ID, derivedStatus: 'CheckedIn' });
+
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).resolves.toMatchObject({
+        derivedStatus: 'CheckedIn',
+      });
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toMatchObject({
+        status: 409,
+        message: 'Không thể check-in lịch hẹn đang ở trạng thái "CheckedIn"',
+      });
+    });
+  });
+
+  describe('database errors', () => {
+    it('propagates errors thrown by the conditional update (e.g. cast error)', async () => {
+      const lean = jest.fn().mockRejectedValue(new Error('cast error'));
+      AppointmentOrder.findOneAndUpdate.mockReturnValue({ lean });
+
+      await expect(service.checkInAppointment('bad-id')).rejects.toThrow('cast error');
+      expect(AppointmentOrder.findById).not.toHaveBeenCalled();
+    });
+
+    it('propagates errors thrown by the follow-up lookup', async () => {
+      mockFindOneAndUpdate(null);
+      const lean = jest.fn().mockRejectedValue(new Error('db down'));
+      AppointmentOrder.findById.mockReturnValue({ select: jest.fn().mockReturnValue({ lean }) });
+
+      await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toThrow('db down');
+    });
   });
 });

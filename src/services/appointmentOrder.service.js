@@ -204,8 +204,33 @@ const getMyOnlineAppointment = async (ownerId, id) => {
   return appointment;
 };
 
+/**
+ * Only a 'Booked' appointment can be checked in. The status check and the update
+ * happen in one atomic operation, so two concurrent check-ins can't both succeed.
+ */
+const checkInAppointment = async (id) => {
+  const appointment = await AppointmentOrder.findOneAndUpdate(
+    { _id: id, derivedStatus: 'Booked' },
+    { $set: { derivedStatus: 'CheckedIn', checkedInAt: new Date() } },
+    { new: true }
+  ).lean();
+
+  if (appointment) return appointment;
+
+  // Nothing updated: either it doesn't exist, or it isn't in 'Booked' status
+  const existing = await AppointmentOrder.findById(id).select('derivedStatus').lean();
+  if (!existing) {
+    throw createError(404, 'Không tìm thấy lịch hẹn');
+  }
+  throw createError(
+    409,
+    `Không thể check-in lịch hẹn đang ở trạng thái "${existing.derivedStatus}"`
+  );
+};
+
 module.exports = {
   createOnlineAppointment,
   listMyOnlineAppointments,
-  getMyOnlineAppointment
+  getMyOnlineAppointment,
+  checkInAppointment
 };

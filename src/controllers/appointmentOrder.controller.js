@@ -52,4 +52,21 @@ const getMyOnlineBookingById = async (req, res) => {
   }
 };
 
-module.exports = { createOnlineBooking, listMyOnlineBooking, getMyOnlineBookingById };
+const checkInBooking = async (req, res) => {
+  const { errors, value: id } = validateAppointmentId(req.params);
+  if (errors.length) return sendValidationError(res, errors);
+
+  try {
+    const appointment = await appointmentService.checkInAppointment(id);
+    return res.json({ message: 'Check-in thành công', data: appointment });
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
+module.exports = {
+  createOnlineBooking,
+  listMyOnlineBooking,
+  getMyOnlineBookingById,
+  checkInBooking
+};

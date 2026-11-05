@@ -1,0 +1,131 @@
+# API Documentation: Check-in Appointment
+
+Check in an appointment when the customer arrives at the clinic. Only appointments with status `Booked` can be checked in. On success, the status changes to `CheckedIn` and `checkedInAt` is set to the current time.
+
+## Endpoint
+
+| | |
+|---|---|
+| **Method** | `PATCH` |
+| **URL** | http://localhost:9999/api/appointment-orders/:id/check-in |
+| **Auth** | Required. Bearer token, role `Receptionist` only |
+| **Content-Type** | Not required (no request body) |
+
+## Request headers
+
+| Header | Required | Description |
+|---|---|---|
+| `Authorization` | Yes | `Bearer <token>`, the token returned by the login API. |
+
+## Path parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `id` | string | Yes | The appointment `_id` (a valid MongoDB ObjectId). |
+
+## Request body
+
+None.
+
+**Example**
+
+```
+PATCH /api/appointment-orders/6ad96d4a9664da6b2c0d8d70/check-in
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+```
+
+## Responses
+
+### 200 OK: success
+
+```json
+{
+  "message": "Check-in thành công",
+  "data": {
+    "_id": "6ad96d4a9664da6b2c0d8d70",
+    "code": "APT-K7M2QX",
+    "petId": "6ad96d4a9664da6b2c0d8d65",
+    "ownerId": "6ad96d4a9664da6b2c0d8d61",
+    "date": "2026-11-05",
+    "note": "Khám tổng quát",
+    "isOnline": true,
+    "derivedStatus": "CheckedIn",
+    "checkedInAt": "2026-11-05T02:30:00.000Z",
+    "createdAt": "2026-11-03T09:15:00.000Z",
+    "updatedAt": "2026-11-05T02:30:00.000Z",
+    "__v": 0
+  }
+}
+```
+
+### 400 Bad Request: validation failed
+
+Returned when `id` is not a valid MongoDB ObjectId.
+
+```json
+{
+  "message": "Dữ liệu không hợp lệ",
+  "errors": [
+    { "field": "id", "message": "id không hợp lệ" }
+  ]
+}
+```
+
+### 401 Unauthorized: missing or invalid token
+
+Returned when the `Authorization` header is missing or does not start with `Bearer `.
+
+```json
+{
+  "message": "Chưa đăng nhập"
+}
+```
+
+Returned when the token is invalid or expired.
+
+```json
+{
+  "message": "Token không hợp lệ hoặc đã hết hạn"
+}
+```
+
+### 403 Forbidden: role not allowed
+
+Returned when the logged-in user is not a Receptionist (for example a `PetOwner`).
+
+```json
+{
+  "message": "Bạn không có quyền thực hiện chức năng này"
+}
+```
+
+### 404 Not Found: appointment does not exist
+
+```json
+{
+  "message": "Không tìm thấy lịch hẹn"
+}
+```
+
+### 409 Conflict: appointment is not in `Booked` status
+
+Returned when the appointment is already `CheckedIn` or is in any other status (`InProgress`, `WaitOwner`, `Done`, `Cancelled`, `Overdue`). The current status is included in the message.
+
+```json
+{
+  "message": "Không thể check-in lịch hẹn đang ở trạng thái \"CheckedIn\""
+}
+```
+
+### 500 Internal Server Error
+
+```json
+{
+  "message": "Lỗi hệ thống"
+}
+```
+
+## Notes
+
+- The status check and the update happen in one atomic operation, so if two requests check in the same appointment at the same time, only one succeeds and the other receives `409`.
+- The endpoint is not scoped to an owner. Any Receptionist can check in any appointment.
