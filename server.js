@@ -13,7 +13,8 @@ const serviceRoutes = require('./src/routes/service.routes');
 const productRoutes = require('./src/routes/product.routes');
 const appointmentOrderRoutes = require('./src/routes/appointmentOrder.routes');
 const cageRoutes = require('./src/routes/cage.routes');
-const cageAssignmentRoutes = require('./src/routes/cageAssignment.routes')
+const cageAssignmentRoutes = require('./src/routes/cageAssignment.routes');
+const appointmentServiceRoutes = require('./src/routes/appointmentService.routes');
 
 const app = express();
 
@@ -35,6 +36,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/appointment-orders', appointmentOrderRoutes);
 app.use('/api/cages', cageRoutes);
 app.use('/api/cage-assignments', cageAssignmentRoutes);
+app.use('/api/appointment-services', appointmentServiceRoutes);
 
 // Chỉ kết nối DB + mở port khi chạy trực tiếp (npm start); test sẽ require app mà không listen
 if (require.main === module) {
