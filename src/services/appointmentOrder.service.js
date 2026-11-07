@@ -3,6 +3,7 @@ const nodemailer = require('nodemailer');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Pet = require('../models/Pet');
 const User = require('../models/User');
+const AppointmentService = require('../models/AppointmentService');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
@@ -201,7 +202,16 @@ const getMyOnlineAppointment = async (ownerId, id) => {
   if (!appointment) {
     throw createError(404, 'Không tìm thấy lịch hẹn');
   }
-  return appointment;
+
+  // Ownership is already verified above, so it's safe to load the order's services
+  const services = await AppointmentService.find({ orderId: appointment._id })
+    .populate('serviceId')
+    .populate('preferredStaffId', 'fullName')
+    .populate('assignedStaffId', 'fullName')
+    .sort({ sequenceNo: 1 })
+    .lean();
+
+  return { ...appointment, services };
 };
 
 /**

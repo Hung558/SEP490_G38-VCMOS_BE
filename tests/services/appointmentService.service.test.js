@@ -1,14 +1,24 @@
 jest.mock('../../src/models/AppointmentService', () => ({
   findOne: jest.fn(),
   create: jest.fn(),
+  deleteMany: jest.fn(),
 }));
 jest.mock('../../src/models/AppointmentOrder', () => ({
   exists: jest.fn(),
+  deleteOne: jest.fn(),
+}));
+// Không nạp appointmentOrder.service thật (kéo theo nodemailer, Pet, User...)
+jest.mock('../../src/services/appointmentOrder.service', () => ({
+  createOnlineAppointment: jest.fn(),
 }));
 
 const AppointmentService = require('../../src/models/AppointmentService');
 const AppointmentOrder = require('../../src/models/AppointmentOrder');
-const { createOnlineAppointmentService } = require('../../src/services/appointmentService.service');
+const { createOnlineAppointment } = require('../../src/services/appointmentOrder.service');
+const {
+  createOnlineAppointmentService,
+  createOnlineBooking,
+} = require('../../src/services/appointmentService.service');
 
 // Giả lập chuỗi findOne().sort().select().lean()
 const mockLastSequence = (result) => {
@@ -19,6 +29,17 @@ const mockLastSequence = (result) => {
   };
   AppointmentService.findOne.mockReturnValue(chain);
   return chain;
+};
+
+// Giả lập nhiều lần gọi findOne liên tiếp (mỗi lần trả về một kết quả khác nhau)
+const mockLastSequences = (...results) => {
+  results.forEach((result) => {
+    AppointmentService.findOne.mockReturnValueOnce({
+      sort: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(result),
+    });
+  });
 };
 
 const basePayload = {
@@ -178,6 +199,255 @@ describe('createOnlineAppointmentService', () => {
       AppointmentService.create.mockRejectedValue(dbError);
 
       await expect(createOnlineAppointmentService(basePayload)).rejects.toBe(dbError);
+    });
+  });
+});
+
+describe('createOnlineBooking', () => {
+  const appointment = { _id: 'order-1', code: 'APT-ABC123', ownerId: 'owner-1' };
+
+  const bookingPayload = {
+    ownerId: 'owner-1',
+    petId: 'pet-1',
+    date: '2026-11-10',
+    note: 'Ghi chú',
+    services: [{ serviceId: 'service-1' }, { serviceId: 'service-2' }],
+  };
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    createOnlineAppointment.mockResolvedValue(appointment);
+    AppointmentOrder.exists.mockResolvedValue({ _id: 'order-1' });
+    AppointmentService.create.mockImplementation(async (doc) => ({
+      _id: `as-${doc.sequenceNo}`,
+      ...doc,
+    }));
+    AppointmentService.deleteMany.mockResolvedValue({ deletedCount: 0 });
+    AppointmentOrder.deleteOne.mockResolvedValue({ deletedCount: 1 });
+  });
+
+  describe('kiểm tra danh sách dịch vụ', () => {
+    it.each([
+      ['không truyền services', undefined],
+      ['services không phải mảng', 'service-1'],
+      ['services là mảng rỗng', []],
+    ])('ném lỗi 400 khi %s', async (_label, services) => {
+      await expect(createOnlineBooking({ ...bookingPayload, services })).rejects.toMatchObject({
+        statusCode: 400,
+        message: 'Lịch hẹn phải có ít nhất một dịch vụ',
+      });
+    });
+
+    it('không tạo lịch hẹn hay dịch vụ khi không có dịch vụ nào', async () => {
+      await createOnlineBooking({ ...bookingPayload, services: [] }).catch(() => {});
+
+      expect(createOnlineAppointment).not.toHaveBeenCalled();
+      expect(AppointmentService.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tạo lịch hẹn', () => {
+    beforeEach(() => mockLastSequences(null, { sequenceNo: 1 }));
+
+    it('gọi createOnlineAppointment với ownerId và { petId, date, note }', async () => {
+      await createOnlineBooking(bookingPayload);
+
+      expect(createOnlineAppointment).toHaveBeenCalledTimes(1);
+      expect(createOnlineAppointment).toHaveBeenCalledWith('owner-1', {
+        petId: 'pet-1',
+        date: '2026-11-10',
+        note: 'Ghi chú',
+      });
+    });
+
+    it('ném lại lỗi từ createOnlineAppointment và không tạo dịch vụ', async () => {
+      const orderError = Object.assign(new Error('Thú cưng này đã có lịch hẹn trong ngày đã chọn'), {
+        status: 409,
+      });
+      createOnlineAppointment.mockRejectedValue(orderError);
+
+      await expect(createOnlineBooking(bookingPayload)).rejects.toBe(orderError);
+
+      expect(AppointmentService.create).not.toHaveBeenCalled();
+    });
+
+    it('không xoá gì khi tạo lịch hẹn thất bại (chưa có gì để hoàn tác)', async () => {
+      createOnlineAppointment.mockRejectedValue(new Error('fail'));
+
+      await createOnlineBooking(bookingPayload).catch(() => {});
+
+      expect(AppointmentService.deleteMany).not.toHaveBeenCalled();
+      expect(AppointmentOrder.deleteOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('tạo các dịch vụ', () => {
+    it('tạo mỗi dịch vụ với orderId của lịch hẹn vừa tạo và kiểm tra quyền sở hữu', async () => {
+      mockLastSequences(null, { sequenceNo: 1 });
+
+      await createOnlineBooking(bookingPayload);
+
+      expect(AppointmentOrder.exists).toHaveBeenCalledTimes(2);
+      expect(AppointmentOrder.exists).toHaveBeenCalledWith({ _id: 'order-1', ownerId: 'owner-1' });
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(1, {
+        orderId: 'order-1',
+        serviceId: 'service-1',
+        sequenceNo: 1,
+      });
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(2, {
+        orderId: 'order-1',
+        serviceId: 'service-2',
+        sequenceNo: 2,
+      });
+    });
+
+    it('tạo tuần tự: dịch vụ sau chỉ bắt đầu khi dịch vụ trước đã xong', async () => {
+      mockLastSequences(null, { sequenceNo: 1 });
+      const events = [];
+      AppointmentService.create.mockImplementation(async (doc) => {
+        events.push(`start-${doc.serviceId}`);
+        await new Promise((resolve) => setImmediate(resolve));
+        events.push(`end-${doc.serviceId}`);
+        return { _id: `as-${doc.sequenceNo}`, ...doc };
+      });
+
+      await createOnlineBooking(bookingPayload);
+
+      expect(events).toEqual(['start-service-1', 'end-service-1', 'start-service-2', 'end-service-2']);
+    });
+
+    it('truyền sequenceNo và isEmergency của từng dịch vụ', async () => {
+      await createOnlineBooking({
+        ...bookingPayload,
+        services: [
+          { serviceId: 'service-1', sequenceNo: 5, isEmergency: true },
+          { serviceId: 'service-2', sequenceNo: 6, isEmergency: false },
+        ],
+      });
+
+      expect(AppointmentService.findOne).not.toHaveBeenCalled();
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(1, {
+        orderId: 'order-1',
+        serviceId: 'service-1',
+        sequenceNo: 5,
+        isEmergency: true,
+      });
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(2, {
+        orderId: 'order-1',
+        serviceId: 'service-2',
+        sequenceNo: 6,
+        isEmergency: false,
+      });
+    });
+
+    it('chỉ có một dịch vụ vẫn tạo được', async () => {
+      mockLastSequences(null);
+
+      const result = await createOnlineBooking({
+        ...bookingPayload,
+        services: [{ serviceId: 'service-1' }],
+      });
+
+      expect(AppointmentService.create).toHaveBeenCalledTimes(1);
+      expect(result.data.services).toHaveLength(1);
+    });
+  });
+
+  describe('kết quả trả về', () => {
+    it('trả về message tiếng Việt, lịch hẹn và danh sách dịch vụ theo thứ tự đã gửi', async () => {
+      mockLastSequences(null, { sequenceNo: 1 });
+
+      const result = await createOnlineBooking(bookingPayload);
+
+      expect(result).toEqual({
+        message: 'Đặt lịch online thành công',
+        data: {
+          appointment,
+          services: [
+            { _id: 'as-1', orderId: 'order-1', serviceId: 'service-1', sequenceNo: 1 },
+            { _id: 'as-2', orderId: 'order-1', serviceId: 'service-2', sequenceNo: 2 },
+          ],
+        },
+      });
+    });
+
+    it('không xoá dữ liệu khi tạo thành công', async () => {
+      mockLastSequences(null, { sequenceNo: 1 });
+
+      await createOnlineBooking(bookingPayload);
+
+      expect(AppointmentService.deleteMany).not.toHaveBeenCalled();
+      expect(AppointmentOrder.deleteOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('hoàn tác khi tạo dịch vụ thất bại', () => {
+    it('xoá các dịch vụ và lịch hẹn đã tạo, rồi ném lại lỗi gốc', async () => {
+      mockLastSequences(null, { sequenceNo: 1 });
+      const dbError = new Error('DB down');
+      AppointmentService.create
+        .mockResolvedValueOnce({ _id: 'as-1', orderId: 'order-1', serviceId: 'service-1', sequenceNo: 1 })
+        .mockRejectedValueOnce(dbError);
+
+      await expect(createOnlineBooking(bookingPayload)).rejects.toBe(dbError);
+
+      expect(AppointmentService.deleteMany).toHaveBeenCalledWith({ orderId: 'order-1' });
+      expect(AppointmentOrder.deleteOne).toHaveBeenCalledWith({ _id: 'order-1' });
+    });
+
+    it('hoàn tác khi dịch vụ đầu tiên thất bại và không tạo các dịch vụ còn lại', async () => {
+      mockLastSequences(null);
+      AppointmentService.create.mockRejectedValueOnce(new Error('fail'));
+
+      await createOnlineBooking(bookingPayload).catch(() => {});
+
+      expect(AppointmentService.create).toHaveBeenCalledTimes(1);
+      expect(AppointmentService.deleteMany).toHaveBeenCalledWith({ orderId: 'order-1' });
+      expect(AppointmentOrder.deleteOne).toHaveBeenCalledWith({ _id: 'order-1' });
+    });
+
+    it('ném lỗi 409 khi trùng sequenceNo và hoàn tác', async () => {
+      AppointmentService.create
+        .mockResolvedValueOnce({ _id: 'as-1', orderId: 'order-1', serviceId: 'service-1', sequenceNo: 1 })
+        .mockRejectedValueOnce({ code: 11000 });
+
+      await expect(
+        createOnlineBooking({
+          ...bookingPayload,
+          services: [
+            { serviceId: 'service-1', sequenceNo: 1 },
+            { serviceId: 'service-2', sequenceNo: 1 },
+          ],
+        })
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        message: 'Số thứ tự dịch vụ đã tồn tại trong lịch hẹn này',
+      });
+
+      expect(AppointmentService.deleteMany).toHaveBeenCalledWith({ orderId: 'order-1' });
+      expect(AppointmentOrder.deleteOne).toHaveBeenCalledWith({ _id: 'order-1' });
+    });
+
+    it('ném lỗi 403 và hoàn tác khi lịch hẹn không thuộc về ownerId', async () => {
+      AppointmentOrder.exists.mockResolvedValue(null);
+
+      await expect(createOnlineBooking(bookingPayload)).rejects.toMatchObject({ statusCode: 403 });
+
+      expect(AppointmentService.create).not.toHaveBeenCalled();
+      expect(AppointmentOrder.deleteOne).toHaveBeenCalledWith({ _id: 'order-1' });
+    });
+
+    it('vẫn ném lỗi gốc nếu bước xoá cũng thất bại', async () => {
+      mockLastSequences(null);
+      const originalError = new Error('create failed');
+      AppointmentService.create.mockRejectedValueOnce(originalError);
+      AppointmentService.deleteMany.mockRejectedValue(new Error('delete failed'));
+      AppointmentOrder.deleteOne.mockRejectedValue(new Error('delete failed'));
+
+      await expect(createOnlineBooking(bookingPayload)).rejects.toBe(originalError);
+
+      expect(AppointmentService.deleteMany).toHaveBeenCalled();
+      expect(AppointmentOrder.deleteOne).toHaveBeenCalled();
     });
   });
 });
