@@ -106,7 +106,78 @@ async function createOnlineBooking({ ownerId, petId, date, note, services }) {
   };
 }
 
+/**
+ * Lễ tân / Admin xem danh sách các dịch vụ nằm trong 1 đơn lịch hẹn (`orderId`).
+ */
+async function getAppointmentServicesByOrderId(orderId) {
+  const services = await AppointmentService.find({ orderId })
+    .populate('serviceId')
+    .populate('preferredStaffId', 'code fullName role status')
+    .populate('assignedStaffId', 'code fullName role status')
+    .sort({ sequenceNo: 1 })
+    .lean();
+
+  return {
+    message: 'Lấy danh sách dịch vụ của lịch hẹn thành công',
+    data: services,
+  };
+}
+
+/**
+ * Lễ tân (Receptionist) phân công Bác sĩ (Veterinarian) hoặc Groomer cho 1 dịch vụ trong lịch hẹn.
+ * - Nếu khách đã Check-in (orderStatus === 'CheckedIn') và dịch vụ đang là 'Booked',
+ *   hệ thống tự động chuyển status của dịch vụ sang 'Waiting', cấp số thứ tự hàng đợi (queueNo)
+ *   và ghi nhận thời điểm vào hàng đợi (enqueueAt) để Bác sĩ / Groomer thấy trên Work Queue.
+ */
+async function assignStaffToAppointmentService({ appointmentServiceId, assignedStaffId, orderStatus }) {
+  const currentService = await AppointmentService.findById(appointmentServiceId).lean();
+  if (!currentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+
+  // Tính số thứ tự hàng đợi (queueNo) tiếp theo của nhân viên đó
+  const lastQueued = await AppointmentService.findOne({
+    assignedStaffId,
+    queueNo: { $ne: null },
+  })
+    .sort({ queueNo: -1 })
+    .select('queueNo')
+    .lean();
+
+  const nextQueueNo = lastQueued && lastQueued.queueNo ? lastQueued.queueNo + 1 : 1;
+
+  const fieldsToSet = {
+    assignedStaffId,
+    queueNo: nextQueueNo,
+  };
+
+  // Nếu đơn hẹn đã Check-in hoặc đang InProgress thì chuyển luôn sang Waiting;
+  // còn nếu đơn đang là Booked (Lễ tân xếp sẵn bác sĩ trước khi khách đến) thì giữ status = 'Booked',
+  // đến khi khách tới bấm Check-in sẽ tự động nhảy sang 'Waiting'
+  if (orderStatus === 'CheckedIn' || orderStatus === 'InProgress') {
+    fieldsToSet.status = 'Waiting';
+    fieldsToSet.enqueueAt = new Date();
+  }
+
+  const updated = await AppointmentService.findByIdAndUpdate(
+    appointmentServiceId,
+    { $set: fieldsToSet },
+    { returnDocument: 'after' }
+  )
+    .populate('serviceId')
+    .populate('preferredStaffId', 'code fullName role status')
+    .populate('assignedStaffId', 'code fullName role status')
+    .lean();
+
+  return {
+    message: 'Phân công nhân sự cho dịch vụ thành công',
+    data: updated,
+  };
+}
+
 module.exports = {
   createOnlineAppointmentService,
-  createOnlineBooking
+  createOnlineBooking,
+  getAppointmentServicesByOrderId,
+  assignStaffToAppointmentService,
 };

@@ -112,3 +112,43 @@ Tài liệu hướng dẫn test từng bước từ A → Z trên **Postman** ch
   3. **Lần 3 (Kiểm tra phân quyền)**:
      - Thử thay bằng `<TOKEN_OWNER>` rồi bấm Send → Phải ra `403 Forbidden` (`"Bạn không có quyền thực hiện chức năng này"`).
 
+---
+
+## BƯỚC 6: Lễ tân (`Receptionist`) xem dịch vụ trong đơn & Phân công Bác sĩ / Groomer (`SCR-16`)
+
+### 1. Xem danh sách các dịch vụ nằm trong đơn hẹn vừa Check-in
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/appointment-services?orderId=<ORDER_ID>`
+- **Authorization**: `Bearer Token` (dán **`<TOKEN_RECEPTIONIST>`**)
+- **Bấm Send**:
+  - Ra `200 OK` kèm mảng `data` chứa các dịch vụ (`AppointmentService`) của đơn hẹn đó.
+  - 👉 **Copy lại `"_id"` của dịch vụ trong mảng `data`** (gọi là **`<APPOINTMENT_SERVICE_ID>`**).
+
+### 2. Lễ tân lấy `_id` của Bác sĩ / Groomer đang hoạt động
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/users/staff?role=Veterinarian&status=Active`
+- **Authorization**: `Bearer Token` (dán **`<TOKEN_RECEPTIONIST>`**)
+- **Bấm Send** → Copy `"_id"` của Bác sĩ muốn phân công (gọi là **`<STAFF_ID>`**).
+
+### 3. Lễ tân bấm Phân công Bác sĩ cho dịch vụ (`PATCH /api/appointment-services/:id/assign-staff`)
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/appointment-services/<APPOINTMENT_SERVICE_ID>/assign-staff`
+- **Authorization**: `Bearer Token` (dán **`<TOKEN_RECEPTIONIST>`**)
+- **Body** (`raw` → `JSON`):
+  ```json
+  {
+    "assignedStaffId": "<dán_STAFF_ID_của_Bác_sĩ>"
+  }
+  ```
+- **Các trường hợp cần bấm Send kiểm tra**:
+  1. **Hợp lệ (Khi đơn đã `CheckedIn`)**:
+     - Ra `200 OK` (`"message": "Phân công nhân sự cho dịch vụ thành công"`).
+     - Kiểm tra `data`:
+       - `assignedStaffId` đã được gán thông tin Bác sĩ.
+       - `status` của dịch vụ tự động chuyển từ `"Booked"` sang **`"Waiting"`** (Đang chờ khám).
+       - Hệ thống tự động cấp số thứ tự hàng đợi **`"queueNo": 1`** và thời điểm vào hàng đợi **`"enqueueAt"`**.
+  2. **Truyền ID của PetOwner hoặc Admin vào `assignedStaffId`**:
+     - Phải ra `400 Bad Request` (`"Nhân sự được phân công phải có vai trò Veterinarian hoặc Groomer"`).
+  3. **Truyền ID nhân viên đang bị khóa (`Locked`)**:
+     - Phải ra `400 Bad Request` (`"Nhân sự được phân công hiện không ở trạng thái hoạt động (Active)"`).
+

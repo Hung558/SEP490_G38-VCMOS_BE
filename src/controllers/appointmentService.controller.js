@@ -1,10 +1,14 @@
 const {
   createOnlineAppointmentService,
   createOnlineBooking,
+  getAppointmentServicesByOrderId,
+  assignStaffToAppointmentService,
 } = require('../services/appointmentService.service');
 const {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
+  validateGetServicesByOrderId,
+  validateAssignStaffToService,
 } = require('../validators/appointmentService.validator');
 
 const handleError = (res, err) => {
@@ -50,7 +54,38 @@ async function createOnlineBookingController(req, res) {
   }
 }
 
+/**
+ * GET /appointment-services?orderId=...
+ * Lễ tân / Admin xem danh sách các dịch vụ nằm trong 1 đơn lịch hẹn
+ */
+async function getAppointmentServicesByOrderIdController(req, res) {
+  try {
+    const orderId = await validateGetServicesByOrderId(req.query && req.query.orderId);
+    const { message, data } = await getAppointmentServicesByOrderId(orderId);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+/**
+ * PATCH /appointment-services/:id/assign-staff
+ * Body: { assignedStaffId }
+ * Lễ tân (Receptionist) phân công Bác sĩ / Groomer cho 1 dịch vụ trong lịch hẹn
+ */
+async function assignStaffToAppointmentServiceController(req, res) {
+  try {
+    const validated = await validateAssignStaffToService(req.params.id, req.body);
+    const { message, data } = await assignStaffToAppointmentService(validated);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   createOnlineAppointmentServiceController,
   createOnlineBookingController,
+  getAppointmentServicesByOrderIdController,
+  assignStaffToAppointmentServiceController,
 };

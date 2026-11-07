@@ -1,4 +1,7 @@
 jest.mock('../../src/models/AppointmentService', () => ({
+  find: jest.fn(),
+  findById: jest.fn(),
+  findByIdAndUpdate: jest.fn(),
   findOne: jest.fn(),
   create: jest.fn(),
   deleteMany: jest.fn(),
@@ -18,6 +21,8 @@ const { createOnlineAppointment } = require('../../src/services/appointmentOrder
 const {
   createOnlineAppointmentService,
   createOnlineBooking,
+  getAppointmentServicesByOrderId,
+  assignStaffToAppointmentService,
 } = require('../../src/services/appointmentService.service');
 
 // Giả lập chuỗi findOne().sort().select().lean()
@@ -448,6 +453,75 @@ describe('createOnlineBooking', () => {
 
       expect(AppointmentService.deleteMany).toHaveBeenCalled();
       expect(AppointmentOrder.deleteOne).toHaveBeenCalled();
+    });
+  });
+});
+
+describe('getAppointmentServicesByOrderId & assignStaffToAppointmentService', () => {
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('getAppointmentServicesByOrderId: trả về danh sách dịch vụ của đơn hẹn đã populate và sort theo sequenceNo', async () => {
+    const items = [{ _id: 'as-1', sequenceNo: 1 }];
+    const chain = {
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(items),
+    };
+    AppointmentService.find.mockReturnValue(chain);
+
+    const result = await getAppointmentServicesByOrderId('order-1');
+
+    expect(AppointmentService.find).toHaveBeenCalledWith({ orderId: 'order-1' });
+    expect(chain.sort).toHaveBeenCalledWith({ sequenceNo: 1 });
+    expect(result).toEqual({
+      message: 'Lấy danh sách dịch vụ của lịch hẹn thành công',
+      data: items,
+    });
+  });
+
+  it('assignStaffToAppointmentService: phân công bác sĩ khi đơn đã CheckedIn -> chuyển status sang Waiting và cấp queueNo', async () => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({ _id: 'as-1', orderId: 'order-1', status: 'Booked' }),
+    });
+    AppointmentService.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ queueNo: 2 }),
+    });
+    const updatedDoc = {
+      _id: 'as-1',
+      assignedStaffId: { _id: 'vet-1', fullName: 'BS Minh' },
+      status: 'Waiting',
+      queueNo: 3,
+    };
+    AppointmentService.findByIdAndUpdate.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(updatedDoc),
+    });
+
+    const result = await assignStaffToAppointmentService({
+      appointmentServiceId: 'as-1',
+      assignedStaffId: 'vet-1',
+      orderStatus: 'CheckedIn',
+    });
+
+    expect(AppointmentService.findByIdAndUpdate).toHaveBeenCalledWith(
+      'as-1',
+      {
+        $set: {
+          assignedStaffId: 'vet-1',
+          status: 'Waiting',
+          enqueueAt: expect.any(Date),
+          queueNo: 3,
+        },
+      },
+      { returnDocument: 'after' }
+    );
+    expect(result).toEqual({
+      message: 'Phân công nhân sự cho dịch vụ thành công',
+      data: updatedDoc,
     });
   });
 });

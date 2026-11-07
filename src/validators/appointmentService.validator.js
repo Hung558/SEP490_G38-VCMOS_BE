@@ -2,8 +2,11 @@ const { isValidObjectId } = require('mongoose');
 const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Service = require('../models/Service');
+const User = require('../models/User');
 
 const BLOCKED_ORDER_STATUSES = ['Done', 'Cancelled', 'Overdue'];
+const BLOCKED_SERVICE_STATUSES = ['InProgress', 'Done', 'Cancelled', 'Overdue'];
+const CLINICAL_STAFF_ROLES = ['Veterinarian', 'Groomer'];
 
 const DEFAULT_ONLY_FIELDS = [
   'preferredStaffId',
@@ -185,7 +188,92 @@ async function validateCreateOnlineBooking(payload) {
   return data;
 }
 
+/**
+ * Kiểm tra dữ liệu khi Lễ tân (Receptionist) xem danh sách dịch vụ của 1 đơn lịch hẹn.
+ */
+async function validateGetServicesByOrderId(orderId) {
+  if (!orderId) throw createError('orderId là bắt buộc');
+  if (!isValidObjectId(orderId)) throw createError('orderId không hợp lệ');
+
+  const orderExists = await AppointmentOrder.exists({ _id: orderId });
+  if (!orderExists) throw createError('Không tìm thấy lịch hẹn', 404);
+
+  return orderId;
+}
+
+/**
+ * Kiểm tra dữ liệu khi Lễ tân (Receptionist) phân công Bác sĩ / Groomer cho 1 dịch vụ trong lịch hẹn.
+ *
+ * @param {string} appointmentServiceId - ID của AppointmentService trên params
+ * @param {Object} payload - { assignedStaffId }
+ */
+async function validateAssignStaffToService(appointmentServiceId, payload) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+
+  const data = payload || {};
+  const { assignedStaffId } = data;
+
+  if (!assignedStaffId) {
+    throw createError('assignedStaffId là bắt buộc');
+  }
+  if (!isValidObjectId(assignedStaffId)) {
+    throw createError('assignedStaffId không hợp lệ');
+  }
+
+  // 1. Kiểm tra bản ghi dịch vụ trong lịch hẹn có tồn tại không
+  const appointmentService = await AppointmentService.findById(appointmentServiceId)
+    .select('orderId status')
+    .lean();
+  if (!appointmentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+
+  // Không cho phân công lại nếu dịch vụ đang thực hiện hoặc đã kết thúc
+  if (BLOCKED_SERVICE_STATUSES.includes(appointmentService.status)) {
+    throw createError(
+      `Không thể phân công nhân sự cho dịch vụ đang ở trạng thái "${appointmentService.status}"`,
+      409
+    );
+  }
+
+  // 2. Kiểm tra đơn lịch hẹn không nằm ở trạng thái đã đóng
+  const order = await AppointmentOrder.findById(appointmentService.orderId)
+    .select('derivedStatus')
+    .lean();
+  if (!order) {
+    throw createError('Không tìm thấy lịch hẹn', 404);
+  }
+  if (BLOCKED_ORDER_STATUSES.includes(order.derivedStatus)) {
+    throw createError(
+      `Không thể phân công nhân sự cho lịch hẹn đang ở trạng thái "${order.derivedStatus}"`,
+      409
+    );
+  }
+
+  // 3. Kiểm tra nhân sự được chọn có tồn tại, đang Active và đúng role Bác sĩ / Groomer không
+  const staff = await User.findById(assignedStaffId).select('role status').lean();
+  if (!staff) {
+    throw createError('Không tìm thấy nhân viên được phân công', 404);
+  }
+  if (!CLINICAL_STAFF_ROLES.includes(staff.role)) {
+    throw createError('Nhân sự được phân công phải có vai trò Veterinarian hoặc Groomer');
+  }
+  if (staff.status !== 'Active') {
+    throw createError('Nhân sự được phân công hiện không ở trạng thái hoạt động (Active)');
+  }
+
+  return {
+    appointmentServiceId,
+    assignedStaffId,
+    orderStatus: order.derivedStatus,
+  };
+}
+
 module.exports = {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
+  validateGetServicesByOrderId,
+  validateAssignStaffToService,
 };
