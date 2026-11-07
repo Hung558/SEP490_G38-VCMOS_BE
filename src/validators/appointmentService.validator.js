@@ -15,10 +15,24 @@ const DEFAULT_ONLY_FIELDS = [
   'groomingNote',
 ];
 
+// Các trường của lịch hẹn không được truyền vào khi đặt lịch (dùng giá trị mặc định / sinh tự động)
+const BOOKING_ORDER_DEFAULT_ONLY_FIELDS = ['code', 'isOnline', 'derivedStatus', 'checkedInAt'];
+
+// Mỗi dịch vụ trong lịch đặt: ngoài các trường mặc định, orderId cũng không được truyền (lịch hẹn chưa tồn tại)
+const BOOKING_SERVICE_DEFAULT_ONLY_FIELDS = [...DEFAULT_ONLY_FIELDS, 'orderId'];
+
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
 const createError = (message, statusCode = 400) => {
   const err = new Error(message);
   err.statusCode = statusCode;
   return err;
+};
+
+// Ngày phải có thật trong lịch (vd: 2026-02-30 là không hợp lệ)
+const isRealDate = (str) => {
+  const d = new Date(`${str}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === str;
 };
 
 /**
@@ -79,6 +93,99 @@ async function validateCreateOnlineAppointmentService(payload) {
   return data;
 }
 
+/**
+ * Kiểm tra dữ liệu trước khi gọi `createOnlineBooking`.
+ * Trả về payload đã kiểm tra nếu hợp lệ, ném lỗi (có `statusCode`) nếu không hợp lệ.
+ *
+ * Việc thú cưng có tồn tại / thuộc về chủ nuôi và chống đặt trùng trong ngày
+ * do `createOnlineAppointment` xử lý, không kiểm tra lại ở đây.
+ *
+ * @param {Object} payload - { petId, date, note?, services: [{ serviceId, sequenceNo?, isEmergency? }] }
+ * @returns {Promise<Object>} payload
+ * @throws {Error} lỗi với `statusCode` 400 | 404 | 409 và thông báo tiếng Việt
+ */
+async function validateCreateOnlineBooking(payload) {
+  const data = payload || {};
+  const { petId, date, note, services } = data;
+
+  // 1. Các trường của lịch hẹn không được phép truyền vào
+  const forbidden = BOOKING_ORDER_DEFAULT_ONLY_FIELDS.filter((field) => data[field] !== undefined);
+  if (forbidden.length > 0) {
+    throw createError(`Không được truyền các trường: ${forbidden.join(', ')}`);
+  }
+
+  // 2. Kiểm tra thông tin lịch hẹn
+  if (!petId) throw createError('petId là bắt buộc');
+  if (!isValidObjectId(petId)) throw createError('petId không hợp lệ');
+
+  if (!date) throw createError('date là bắt buộc');
+  if (typeof date !== 'string' || !DATE_REGEX.test(date) || !isRealDate(date)) {
+    throw createError('date phải có định dạng YYYY-MM-DD và là ngày hợp lệ');
+  }
+
+  if (note !== undefined && typeof note !== 'string') {
+    throw createError('note phải là chuỗi');
+  }
+
+  // 3. Kiểm tra danh sách dịch vụ
+  if (!Array.isArray(services) || services.length === 0) {
+    throw createError('Lịch hẹn phải có ít nhất một dịch vụ');
+  }
+
+  services.forEach((item, i) => {
+    const label = `services[${i}]`;
+
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw createError(`${label} không hợp lệ`);
+    }
+
+    const forbiddenInItem = BOOKING_SERVICE_DEFAULT_ONLY_FIELDS.filter((f) => item[f] !== undefined);
+    if (forbiddenInItem.length > 0) {
+      throw createError(`${label}: không được truyền các trường: ${forbiddenInItem.join(', ')}`);
+    }
+
+    if (!item.serviceId) throw createError(`${label}: serviceId là bắt buộc`);
+    if (!isValidObjectId(item.serviceId)) throw createError(`${label}: serviceId không hợp lệ`);
+
+    if (item.sequenceNo !== undefined && (!Number.isInteger(item.sequenceNo) || item.sequenceNo < 1)) {
+      throw createError(`${label}: sequenceNo phải là số nguyên dương`);
+    }
+
+    if (item.isEmergency !== undefined && typeof item.isEmergency !== 'boolean') {
+      throw createError(`${label}: isEmergency phải là true hoặc false`);
+    }
+  });
+
+  // 4. Kiểm tra trùng số thứ tự: mô phỏng đúng cách `createOnlineBooking` tạo dịch vụ tuần tự
+  //    (không truyền sequenceNo => tự tăng = số lớn nhất hiện có + 1)
+  const usedSeq = new Set();
+  let maxSeq = 0;
+  services.forEach((item, i) => {
+    let seq = item.sequenceNo;
+    if (seq === undefined) {
+      seq = maxSeq + 1;
+    } else if (usedSeq.has(seq)) {
+      throw createError(`services[${i}]: Số thứ tự dịch vụ bị trùng trong lịch hẹn này`, 409);
+    }
+    usedSeq.add(seq);
+    maxSeq = Math.max(maxSeq, seq);
+  });
+
+  // 5. Kiểm tra dịch vụ tồn tại và đang hoạt động (1 truy vấn cho tất cả)
+  const serviceIds = [...new Set(services.map((s) => String(s.serviceId)))];
+  const found = await Service.find({ _id: { $in: serviceIds } }).select('status').lean();
+  const serviceMap = new Map(found.map((s) => [String(s._id), s]));
+
+  services.forEach((item, i) => {
+    const service = serviceMap.get(String(item.serviceId));
+    if (!service) throw createError(`services[${i}]: Không tìm thấy dịch vụ`, 404);
+    if (service.status !== 'Active') throw createError(`services[${i}]: Dịch vụ hiện không hoạt động`);
+  });
+
+  return data;
+}
+
 module.exports = {
   validateCreateOnlineAppointmentService,
+  validateCreateOnlineBooking,
 };
