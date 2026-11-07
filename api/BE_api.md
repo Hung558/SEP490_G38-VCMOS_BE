@@ -582,3 +582,28 @@
 - **Kết quả mong đợi**:
   - `200 OK`: Chuyển `derivedStatus` từ `"Booked"` sang **`"CheckedIn"`** và ghi nhận thời gian `checkedInAt`.
   - `409 Conflict`: Nếu đơn hẹn đã check-in rồi hoặc đang ở trạng thái khác `"Booked"`.
+
+---
+
+### 8.5. `Receptionist` / `Admin` xem danh sách dịch vụ của 1 đơn hẹn (`GET /api/appointment-services`)
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/appointment-services?orderId=<id_đơn_lịch_hẹn>`
+- **Auth**: 🔒 `Receptionist` hoặc `Admin`
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về danh sách các dịch vụ (`AppointmentService`) thuộc đơn hẹn đó, đã populate thông tin dịch vụ và nhân sự.
+
+---
+
+### 8.6. `Receptionist` phân công Bác sĩ / Groomer cho dịch vụ khám (`SCR-16`)
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/appointment-services/:id/assign-staff`
+- **Auth**: 🔒 Chỉ `Receptionist`
+- **Body (`JSON`)**:
+  ```json
+  {
+    "assignedStaffId": "<id_Bác_sĩ_hoặc_Groomer_đang_Active>"
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `200 OK`: Gán `assignedStaffId` cho dịch vụ. Nếu đơn hẹn đã `CheckedIn`, dịch vụ tự động chuyển `status` sang **`"Waiting"`**, tự động cấp số thứ tự hàng đợi `queueNo` và ghi nhận thời điểm `enqueueAt`.
+  - `400 Bad Request`: Nếu nhân sự không phải `Veterinarian` / `Groomer` hoặc không ở trạng thái `Active`.

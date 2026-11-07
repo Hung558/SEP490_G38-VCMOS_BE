@@ -1,4 +1,5 @@
 const appointmentService = require('../services/appointmentOrder.service');
+const AppointmentServiceModel = require('../models/AppointmentService');
 const {
   validateCreateOnlineAppointment,
   validateListOnlineAppointments,
@@ -71,6 +72,14 @@ const checkInBooking = async (req, res) => {
 
   try {
     const appointment = await appointmentService.checkInAppointment(id);
+
+    // Khi khách đến Check-in, nếu các dịch vụ bên trong đã được Lễ tân phân công Bác sĩ từ trước
+    // thì tự động chuyển trạng thái dịch vụ từ 'Booked' sang 'Waiting' để vào hàng đợi của Bác sĩ
+    await AppointmentServiceModel.updateMany(
+      { orderId: id, status: 'Booked', assignedStaffId: { $ne: null } },
+      { $set: { status: 'Waiting', enqueueAt: appointment.checkedInAt || new Date() } }
+    );
+
     return res.json({ message: 'Check-in thành công', data: appointment });
   } catch (err) {
     return handleError(res, err);
