@@ -607,3 +607,52 @@
 - **Kết quả mong đợi**:
   - `200 OK`: Gán `assignedStaffId` cho dịch vụ. Nếu đơn hẹn đã `CheckedIn`, dịch vụ tự động chuyển `status` sang **`"Waiting"`**, tự động cấp số thứ tự hàng đợi `queueNo` và ghi nhận thời điểm `enqueueAt`.
   - `400 Bad Request`: Nếu nhân sự không phải `Veterinarian` / `Groomer` hoặc không ở trạng thái `Active`.
+
+---
+
+### 8.7. `Receptionist` / `Admin` tra cứu khách hàng theo SĐT tại quầy (`UC-20` — `SCR-18`)
+*(Tài liệu test từng bước: [le-tan-tiep-nhan-khach-vang-lai-walk-in.md](file:///d:/FA_ki9_FU_Final/FINAL_GRADE/VCMOS_Project/VCMOS_BE/api/quy-trinh-cac-buoc-test/le-tan-tiep-nhan-khach-vang-lai-walk-in.md))*
+
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/appointment-orders/walk-in/customer-lookup?phone=0988777666`
+- **Auth**: 🔒 `Receptionist` hoặc `Admin`
+- **Kết quả mong đợi**:
+  - `200 OK`:
+    - Nếu SĐT đã tồn tại: trả về `{ found: true, customer, pets }` (gồm thông tin khách và danh sách thú cưng đang `Active`).
+    - Nếu SĐT chưa có: trả về `{ found: false, customer: null, pets: [] }`.
+
+---
+
+### 8.8. `Receptionist` đăng ký khám vãng lai tại quầy (Walk-in — `UC-19`, `UC-21`, `BR-04`)
+- **Method**: `POST`
+- **URL**: `http://localhost:9999/api/appointment-orders/walk-in`
+- **Auth**: 🔒 Chỉ `Receptionist`
+- **Body (`JSON`)**:
+  ```json
+  {
+    "phone": "0988777666",
+    "fullName": "Trần Thị Khách Vãng Lai",
+    "petInfo": {
+      "name": "Milo",
+      "species": "Chó",
+      "breed": "Poodle",
+      "weight": 4.5,
+      "coatColor": "Nâu đỏ"
+    },
+    "note": "Khách đưa bé đến khám trực tiếp tại quầy",
+    "services": [
+      {
+        "serviceId": "<id_dịch_vụ_Active>",
+        "assignedStaffId": "<id_Bác_sĩ_hoặc_Groomer_Active>",
+        "isEmergency": false
+      }
+    ],
+    "cageId": null
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `201 Created`:
+    - Nếu SĐT chưa có: tự động tạo tài khoản `PetOwner` ở trạng thái **`"Inactive"`** (`passwordHash: null`) theo **`BR-04`**.
+    - Tạo thú cưng mới (`petInfo`) hoặc dùng lại thú cưng cũ (`petId`).
+    - Tạo đơn hẹn `AppointmentOrder` với `isOnline: false`, **`derivedStatus: "CheckedIn"`** và `checkedInAt` ngay lập tức.
+    - Dịch vụ có `assignedStaffId` tự động nhảy sang **`status: "Waiting"`** kèm `queueNo` và `enqueueAt`.

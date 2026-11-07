@@ -5,11 +5,13 @@ const crypto = require('crypto');
 
 jest.mock('nodemailer');
 jest.mock('../../src/models/AppointmentOrder');
+jest.mock('../../src/models/AppointmentService');
 jest.mock('../../src/models/Pet');
 jest.mock('../../src/models/User');
 
 const nodemailer = require('nodemailer');
 const AppointmentOrder = require('../../src/models/AppointmentOrder');
+const AppointmentService = require('../../src/models/AppointmentService');
 const Pet = require('../../src/models/Pet');
 const User = require('../../src/models/User');
 const service = require('../../src/services/appointmentOrder.service');
@@ -1057,9 +1059,17 @@ describe('getMyOnlineAppointment', () => {
     const appointment = { _id: 'apt-1', ownerId: OWNER_ID, isOnline: true };
     mockAppointmentFindOne(appointment);
 
+    const mockServices = [{ _id: 'svc-1', sequenceNo: 1 }];
+    const lean = jest.fn().mockResolvedValue(mockServices);
+    const sort = jest.fn().mockReturnValue({ lean });
+    const populateAssigned = jest.fn().mockReturnValue({ sort });
+    const populatePreferred = jest.fn().mockReturnValue({ populate: populateAssigned });
+    const populateService = jest.fn().mockReturnValue({ populate: populatePreferred });
+    AppointmentService.find.mockReturnValue({ populate: populateService });
+
     const result = await service.getMyOnlineAppointment(OWNER_ID, 'apt-1');
 
-    expect(result).toBe(appointment);
+    expect(result).toEqual({ ...appointment, services: mockServices });
     expect(AppointmentOrder.findOne).toHaveBeenCalledWith({
       _id: 'apt-1',
       ownerId: OWNER_ID,

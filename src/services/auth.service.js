@@ -46,11 +46,51 @@ const isDuplicateOn = (err, field) => {
 };
 
 // Tự đăng ký luôn là PetOwner; tài khoản nhân viên do Admin tạo.
+// Theo BR-04 (UC-02 Flow 5a): Nếu SĐT thuộc về tài khoản khách vãng lai tại quầy (PetOwner, status = 'Inactive', passwordHash = null),
+// hệ thống tự động kích hoạt tài khoản đó lên 'Active' và đặt mật khẩu để khách giữ nguyên hồ sơ thú cưng & lịch sử khám trước đó.
 const register = async ({ fullName, phone, email, password }) => {
   phone = phone.trim();
   email = email ? email.trim().toLowerCase() : undefined;
 
-  if (await User.exists({ phone })) throw httpError(409, 'Số điện thoại đã được đăng ký');
+  if (await User.exists({ phone })) {
+    const findQuery = User.findOne ? User.findOne({ phone }) : null;
+    const existingUser =
+      findQuery && typeof findQuery.select === 'function'
+        ? await findQuery.select('+passwordHash')
+        : null;
+
+    const isWalkInInactiveAccount =
+      existingUser &&
+      existingUser.role === 'PetOwner' &&
+      existingUser.status === 'Inactive' &&
+      !existingUser.passwordHash;
+
+    if (!isWalkInInactiveAccount) {
+      throw httpError(409, 'Số điện thoại đã được đăng ký');
+    }
+
+    // Kiểm tra email mới (nếu có nhập) chưa bị tài khoản khác sử dụng
+    if (email) {
+      const emailTaken = await User.exists({ email, _id: { $ne: existingUser._id } });
+      if (emailTaken) throw httpError(409, 'Email đã được đăng ký');
+    }
+
+    existingUser.fullName = fullName.trim();
+    if (email) {
+      existingUser.email = email;
+    }
+    existingUser.passwordHash = await bcrypt.hash(password, 10);
+    existingUser.status = 'Active';
+
+    try {
+      await existingUser.save();
+      return toPublicUser(existingUser);
+    } catch (err) {
+      if (err.code === 11000) throw httpError(409, 'Số điện thoại hoặc email đã được đăng ký');
+      throw err;
+    }
+  }
+
   if (email && (await User.exists({ email }))) throw httpError(409, 'Email đã được đăng ký');
 
   const passwordHash = await bcrypt.hash(password, 10);
