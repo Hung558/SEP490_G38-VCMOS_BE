@@ -25,13 +25,30 @@ Check in an appointment when the customer arrives at the clinic. Only appointmen
 
 ## Request body
 
-None.
+Optional JSON body. Receptionist can optionally assign an available holding cage and specify isolation requirement directly during check-in (UC-22, BR-09, BR-11).
 
-**Example**
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `cageId` | string | No | The `_id` of an available cage to assign. Must match pet weight according to BR-11 (S: $\le$5kg, M: 5–15kg, L: 15–30kg, XL: >30kg). |
+| `requiresIsolation` | boolean | No | Set to `true` if pet is suspected of contagious diseases (requires an `isIsolated = true` cage). Defaults to `false`. |
+
+**Example 1: Check-in without cage assignment (customer holds pet in waiting area)**
+```json
+{}
+```
+
+**Example 2: Check-in with cage assignment**
+```json
+{
+  "cageId": "6ad96d4a9664da6b2c0d8d70",
+  "requiresIsolation": false
+}
+```
 
 ```
 PATCH /api/appointment-orders/6ad96d4a9664da6b2c0d8d70/check-in
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+Content-Type: application/json
 ```
 
 ## Responses
@@ -60,14 +77,11 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 
 ### 400 Bad Request: validation failed
 
-Returned when `id` is not a valid MongoDB ObjectId.
+Returned when `id` or `cageId` is not a valid MongoDB ObjectId, or when the selected cage size does not accommodate pet weight / isolation requirement according to BR-11.
 
 ```json
 {
-  "message": "Dữ liệu không hợp lệ",
-  "errors": [
-    { "field": "id", "message": "id không hợp lệ" }
-  ]
+  "message": "Chuồng cỡ S (tối đa 5kg) không phù hợp với thú cưng nặng 8.5kg"
 }
 ```
 

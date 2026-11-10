@@ -23,7 +23,9 @@ Create a new cage.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `label` | string | Yes | Cage label. Must be a non-empty string and unique across all cages. Leading/trailing spaces are trimmed. |
-| `size` | string | Yes | Cage size. One of `S`, `M`, `L`, `XL`. |
+| `size` | string | Yes | Cage size. One of `S` ($\le$5kg), `M` (5–15kg), `L` (15–30kg), `XL` (>30kg). |
+| `zone` | string | No | Zone location. One of `Holding`, `InpatientWard`. Defaults to `Holding`. |
+| `maxWeightKg` | number | No | Optional custom maximum weight limit in kg. |
 | `isIsolated` | boolean | No | Whether the cage is an isolation cage. Must be a real boolean (`true`/`false`). Defaults to `false`. |
 | `status` | string | No | Cage status. One of `Available`, `Occupied`. Defaults to `Available`. |
 

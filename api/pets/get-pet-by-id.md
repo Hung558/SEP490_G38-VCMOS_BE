@@ -1,6 +1,9 @@
 # API Documentation: Get Pet by ID
 
-Get one pet by its id. Only the pet's owner can read it. Both `Active` and `Deleted` pets can be fetched.
+Get one pet by its id.
+- If requested by a `PetOwner`, only their own pet can be viewed.
+- If requested by clinic staff (`Veterinarian`, `Receptionist`, `Groomer`, `Admin`), any pet profile can be viewed for examination and reception purposes.
+Both `Active` and `Deleted` pets can be fetched.
 
 ## Endpoint
 

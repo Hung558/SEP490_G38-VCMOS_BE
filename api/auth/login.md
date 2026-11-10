@@ -71,6 +71,10 @@ Log in with a phone number or email and password.
 ```json
 { "message": "Tài khoản đã bị khoá, vui lòng liên hệ quản trị viên" }
 ```
+Or when account is temporarily locked due to 5 consecutive failed login attempts (BR-03, MSG12):
+```json
+{ "message": "Bạn đã nhập sai mật khẩu 5 lần liên tiếp. Tài khoản bị tạm khóa trong 30 phút" }
+```
 
 ### 500 Internal Server Error
 ```json

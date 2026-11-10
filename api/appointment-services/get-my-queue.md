@@ -28,7 +28,7 @@ Authorization: Bearer <token>
 
 ## Sorting
 
-Results are sorted by `queueNo` ascending, then by `createdAt` ascending. Services that have no `queueNo` yet (`null`) are listed first.
+Results are sorted by emergency priority first (`isEmergency: -1`), then by `queueNo` ascending (`1`), then by `enqueueAt` ascending (`1`). Emergency cases always appear at the top of the queue.
 
 ## Responses
 
