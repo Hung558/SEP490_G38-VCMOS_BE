@@ -353,7 +353,7 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       });
     });
 
-    it('hoàn tất ca khám số 1 thành công: khóa bệnh án Finalized, đơn hẹn vẫn InProgress vì còn dịch vụ số 2', async () => {
+    it('hoàn tất ca khám số 1 thành công: giữ bệnh án ở trạng thái Draft theo BR-14 (chờ thu tiền mới Finalized), chuyển dịch vụ sang Done', async () => {
       const res = await request(app)
         .post(`/api/medical-records/service/${firstServiceDoc._id}/complete`)
         .set('Authorization', `Bearer ${vetToken}`)
@@ -363,13 +363,20 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
         });
 
       expect(res.status).toBe(200);
-      expect(res.body.medicalRecord.status).toBe('Finalized');
+      // BR-14: Bệnh án vẫn ở Draft cho đến khi hóa đơn được thanh toán (Invoice Paid)
+      expect(res.body.medicalRecord.status).toBe('Draft');
       expect(res.body.appointmentService.status).toBe('Done');
       // Còn dịch vụ số 2 chưa làm nên đơn hẹn vẫn ở InProgress
       expect(res.body.appointmentOrder.derivedStatus).toBe('InProgress');
     });
 
-    it('chặn chỉnh sửa bệnh án sau khi đã khóa Finalized theo BR-14 (409)', async () => {
+    it('chặn chỉnh sửa bệnh án sau khi đã khóa Finalized (khi hóa đơn đã thanh toán) theo BR-14 (409)', async () => {
+      // Giả lập hóa đơn đã thanh toán (Paid) -> Bệnh án được khóa Finalized
+      await MedicalRecord.findOneAndUpdate(
+        { appointmentServiceId: firstServiceDoc._id },
+        { $set: { status: 'Finalized' } }
+      );
+
       const res = await request(app)
         .put(`/api/medical-records/service/${firstServiceDoc._id}`)
         .set('Authorization', `Bearer ${vetToken}`)

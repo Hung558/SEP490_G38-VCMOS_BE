@@ -50,7 +50,7 @@ const listPets = async (req, res) => {
 const getPetById = async (req, res) => {
   try {
     const petId = validatePetId(req.params.petId);
-    const pet = await petService.getPetById(req.user.id, petId);
+    const pet = await petService.getPetById(req.user.id, petId, req.user.role);
     return res.json({ pet });
   } catch (err) {
     return handleError(res, err);

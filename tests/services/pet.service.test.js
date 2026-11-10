@@ -317,6 +317,16 @@ describe('getPetById', () => {
     expect(result).toBe(pet);
   });
 
+  it('allows clinic staff (Veterinarian, Receptionist, Groomer, Admin) to view any pet by id', async () => {
+    const pet = makePetDoc();
+    Pet.findOne.mockResolvedValue(pet);
+
+    const result = await petService.getPetById('vet-staff-id', PET_ID, 'Veterinarian');
+
+    expect(Pet.findOne).toHaveBeenCalledWith({ _id: PET_ID });
+    expect(result).toBe(pet);
+  });
+
   it('throws a 404 error when the pet does not exist or belongs to someone else', async () => {
     Pet.findOne.mockResolvedValue(null);
 

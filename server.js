@@ -40,6 +40,18 @@ app.use('/api/cage-assignments', cageAssignmentRoutes);
 app.use('/api/appointment-services', appointmentServiceRoutes);
 app.use('/api/medical-records', medicalRecordRoutes);
 
+// Global Error Middleware: mọi lỗi đẩy qua next(err) đều trả về JSON thống nhất kèm message tiếng Việt
+app.use((err, req, res, next) => {
+    const statusCode = err.statusCode || err.status || 500;
+    const response = {
+        message: err.message || 'Lỗi hệ thống',
+    };
+    if (err.errors) {
+        response.errors = err.errors;
+    }
+    return res.status(statusCode).json(response);
+});
+
 // Chỉ kết nối DB + mở port khi chạy trực tiếp (npm start); test sẽ require app mà không listen
 if (require.main === module) {
     connectDB();
