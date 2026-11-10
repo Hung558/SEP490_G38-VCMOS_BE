@@ -195,7 +195,7 @@ async function getAppointmentServicesByAssignedStaffId({ assignedStaffId, status
     .populate('orderId')
     .populate('preferredStaffId', 'code fullName role status')
     .populate('assignedStaffId', 'code fullName role status')
-    .sort({ queueNo: 1, createdAt: 1 })
+    .sort({ isEmergency: -1, queueNo: 1, enqueueAt: 1 })
     .lean();
 
   return {

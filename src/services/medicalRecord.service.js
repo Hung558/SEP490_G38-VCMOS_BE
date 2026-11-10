@@ -253,7 +253,8 @@ const saveDraftMedicalRecord = async (staffId, appointmentServiceId, payload) =>
  * 3. Hoàn tất Bệnh án SOAP & Kết thúc ca khám (POST /api/medical-records/service/:appointmentServiceId/complete)
  * - Bắt buộc đủ 4 trường S - O - A - P theo BR-13.
  * - Chặn hoàn tất nếu còn chỉ định Cận lâm sàng (SubtaskRequest) ở trạng thái Pending/InProgress (MSG26).
- * - Chốt bệnh án sang Finalized, chuyển dịch vụ khám sang Done.
+ * - Theo BR-14: giữ bệnh án ở trạng thái Draft khi vừa khám xong; chỉ khi Lễ tân thu tiền xong (Invoice Paid) thì bệnh án mới chuyển sang Finalized.
+ * - Chuyển trạng thái dịch vụ khám sang Done.
  * - Nếu tất cả dịch vụ trong đơn hẹn đã xong -> tự động chuyển đơn hẹn sang WaitOwner (BR-09).
  * - Nếu bác sĩ truyền waitingCageId -> tự động xếp thú cưng vào chuồng chờ đón (BR-10).
  */
@@ -339,8 +340,8 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
     });
   }
 
-  // Chốt bệnh án sang trạng thái Finalized
-  const finalizedRecord = await MedicalRecord.findOneAndUpdate(
+  // BR-14: Giữ bệnh án ở trạng thái Draft khi vừa hoàn tất khám; chỉ chuyển sang Finalized khi hóa đơn được thanh toán (Invoice Paid)
+  const completedRecord = await MedicalRecord.findOneAndUpdate(
     { appointmentServiceId },
     {
       $set: {
@@ -351,7 +352,7 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
         plan: finalPlan.trim(),
         notes: finalNotes || '',
         prescriptions: finalPrescriptions,
-        status: 'Finalized',
+        status: 'Draft',
       },
     },
     { upsert: true, returnDocument: 'after' }
@@ -398,7 +399,7 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
   }
 
   return {
-    medicalRecord: finalizedRecord,
+    medicalRecord: completedRecord,
     appointmentService: completedService,
     appointmentOrder: updatedOrder,
     waitingCageAssignment,

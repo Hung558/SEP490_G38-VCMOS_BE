@@ -775,7 +775,7 @@
   - `200 OK`:
     - Bắt buộc đủ cả 4 trường **S - O - A - P** theo **`BR-13`**.
     - Chặn hoàn tất nếu vẫn còn chỉ định Cận lâm sàng (`SubtaskRequest`) ở trạng thái `Pending` hoặc `InProgress` (**`MSG26`**).
-    - Khóa bệnh án sang **`status: "Finalized"`** (**`BR-14`** — không thể sửa lại sau khi khóa).
+    - Theo **`BR-14`**: Giữ bệnh án ở trạng thái **`status: "Draft"`** khi bác sĩ vừa khám xong; chỉ khi Lễ tân thu tiền xong (`Invoice.paymentStatus = "Paid"`) thì bệnh án mới chuyển sang **`Finalized`** và khóa vĩnh viễn.
     - Chuyển trạng thái dịch vụ khám sang **`Done`**.
     - Nếu tất cả dịch vụ trong đơn hẹn đã hoàn tất: tự động chuyển `AppointmentOrder.derivedStatus` sang **`"WaitOwner"`** (Chờ chủ đón & thanh toán) theo **`BR-09`**.
     - Nếu truyền `waitingCageId`: tự động xếp thú cưng vào chuồng chờ đón theo **`BR-10`**.

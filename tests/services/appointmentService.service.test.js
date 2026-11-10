@@ -588,12 +588,12 @@ describe('getAppointmentServicesByAssignedStaffId', () => {
       expect(chain.populate).toHaveBeenCalledWith('assignedStaffId', 'code fullName role status');
     });
 
-    it('sắp xếp theo queueNo tăng dần rồi đến createdAt tăng dần', async () => {
+    it('sắp xếp ưu tiên ca cấp cứu (isEmergency giảm dần), sau đó theo queueNo và enqueueAt tăng dần', async () => {
       const chain = mockFindChain([]);
 
       await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' });
 
-      expect(chain.sort).toHaveBeenCalledWith({ queueNo: 1, createdAt: 1 });
+      expect(chain.sort).toHaveBeenCalledWith({ isEmergency: -1, queueNo: 1, enqueueAt: 1 });
     });
 
     it('dùng lean() để trả về object thuần', async () => {

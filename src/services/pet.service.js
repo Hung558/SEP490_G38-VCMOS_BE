@@ -106,10 +106,13 @@ const createPet = async (ownerId, data, photo) => {
 };
 
 /**
- * Get a single pet by id, only if it belongs to `ownerId`.
+ * Get a single pet by id.
+ * - Nếu là PetOwner (mặc định): chỉ được xem thú cưng thuộc sở hữu của chính mình (`ownerId`).
+ * - Nếu là nhân sự phòng khám (Receptionist, Veterinarian, Groomer, Admin): được xem hồ sơ mọi thú cưng.
  */
-const getPetById = async (ownerId, petId) => {
-  const pet = await Pet.findOne({ _id: petId, ownerId });
+const getPetById = async (ownerId, petId, role = 'PetOwner') => {
+  const filter = role === 'PetOwner' ? { _id: petId, ownerId } : { _id: petId };
+  const pet = await Pet.findOne(filter);
   if (!pet) throw createError('Không tìm thấy thú cưng', 404);
   return pet;
 };
