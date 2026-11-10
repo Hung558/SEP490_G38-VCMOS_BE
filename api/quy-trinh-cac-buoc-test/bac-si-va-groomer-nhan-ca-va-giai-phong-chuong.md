@@ -135,12 +135,41 @@ Sau khi Bác sĩ ra chuồng đón thú cưng vào phòng khám (hoặc khi kế
 
 ---
 
-## BƯỚC 5: Đối chiếu kiểm tra chuồng đã trống trên hệ thống
+## BƯỚC 5: Bác sĩ bắt đầu ca khám, Ghi bệnh án chuẩn SOAP, Kê đơn thuốc & Hoàn tất ca khám (`/api/medical-records`)
 
-Để đảm bảo dữ liệu đồng bộ 100%:
-1. Dùng token Lễ tân hoặc Bác sĩ gọi:
-   ```
-   GET http://localhost:9999/api/cages?status=Available
-   ```
-2. Chuồng vừa được giải phóng ở Bước 4 sẽ xuất hiện ngay trong danh sách chuồng trống (`Available`), Lễ tân có thể gán cho các khách hàng tiếp theo!
+Sau khi biết thú cưng đang ở chuồng nào, Bác sĩ có thể bấm **"Bắt đầu khám"** để hệ thống tự động giải phóng chuồng chờ, chuyển ca khám sang `InProgress` và mở màn hình ghi bệnh án chuẩn SOAP (`SCR-18`):
+
+1. **Bắt đầu ca khám (`POST /api/medical-records/service/<SERVICE_ITEM_ID>/start`)**:
+   - Header: `Authorization: Bearer <TOKEN_VET>`
+   - Hệ thống kiểm tra thứ tự dịch vụ (`BR-12`), tự động giải phóng chuồng chờ của đơn hẹn (`BR-10`), chuyển dịch vụ sang `InProgress` và tạo bản nháp `MedicalRecord` (`Draft`).
+2. **Xem tiền sử bệnh lý của thú cưng (`GET /api/medical-records/pet/<PET_ID>`)**:
+   - Header: `Authorization: Bearer <TOKEN_VET>`
+   - Mở ngăn kéo Lịch sử bệnh án (`UC-32`) để xem các lần khám trước của bé.
+3. **Lưu nháp bệnh án SOAP, cập nhật cân nặng & kê đơn thuốc (`PUT /api/medical-records/service/<SERVICE_ITEM_ID>`)**:
+   - Header: `Authorization: Bearer <TOKEN_VET>`
+   - Body (`JSON`):
+     ```json
+     {
+       "subjectiveNote": "Bỏ ăn 2 ngày, nôn khan buổi sáng",
+       "objectiveNote": "Nhiệt độ 39.2 độ C, niêm mạc hồng nhạt",
+       "assessment": "Viêm dạ dày ruột cấp nhẹ",
+       "plan": "Uống kháng sinh 5 ngày, tái khám sau 1 tuần",
+       "weight": 9.2,
+       "prescriptions": [
+         {
+           "productId": "<id_thuốc_Active>",
+           "dosage": "1 viên",
+           "frequency": "2 lần/ngày sau ăn",
+           "instructions": "Trộn thức ăn mềm",
+           "durationDays": 5
+         }
+       ]
+     }
+     ```
+   - Hệ thống tự động cập nhật cân nặng mới (`9.2 kg`) vào hồ sơ thú cưng (`Pet.weight`) và kiểm tra thuốc kê đơn phải đang Còn hàng (`Active` - `BR-16`).
+4. **Hoàn tất bệnh án SOAP & Kết thúc ca khám (`POST /api/medical-records/service/<SERVICE_ITEM_ID>/complete`)**:
+   - Header: `Authorization: Bearer <TOKEN_VET>`
+   - Body (`JSON`): `{ "waitingCageId": "<id_chuồng_chờ_đón_nếu_cần>" }`
+   - Hệ thống kiểm tra đủ 4 trường **S - O - A - P** (`BR-13`), chặn nếu còn Sub-task cận lâm sàng chưa xong (`MSG26`), khóa bệnh án sang **`Finalized`** (`BR-14`), chuyển dịch vụ sang **`Done`**, và tự động chuyển đơn hẹn sang **`WaitOwner`** (Chờ chủ đón) nếu tất cả dịch vụ trong đơn đã hoàn tất (`BR-09`).
+
 
