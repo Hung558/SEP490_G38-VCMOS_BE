@@ -18,6 +18,7 @@
 7. [Quản Lý Chuồng Nuôi & Phân Công Chuồng (`Cages` — `/api/cages` & `/api/cage-assignments`)](#7--quản-lý-chuồng-nuôi--phân-công-chuồng-cages--apicages--apicage-assignments)
 8. [Đặt Lịch Hẹn Online & Lễ Tân Check-in (`Appointments` — `/api/appointment-orders` & `/api/appointment-services`)](#8--đặt-lịch-hẹn-online--lễ-tân-check-in-appointments)
 9. [Bác Sĩ & Groomer Nhận Ca, Tra Cứu & Giải Phóng Chuồng (`Work Queue` — `/api/appointment-services/my-queue` & `/api/cage-assignments`)](#9--bác-sĩ--groomer-nhận-ca-tra-cứu--giải-phóng-chuồng-work-queue)
+10. [Bác Sĩ Khám Lâm Sàng, Ghi Bệnh Án Chuẩn SOAP & Kê Đơn Thuốc (`Medical Records` — `/api/medical-records`)](#10--bác-sĩ-khám-lâm-sàng-ghi-bệnh-án-chuẩn-soap--kê-đơn-thuốc-medical-records--apimedical-records)
 
 ---
 
@@ -700,3 +701,101 @@
 - **Kết quả mong đợi**:
   - `200 OK`: Ghi nhận `releasedAt` thành thời gian hiện tại và tự động chuyển chuồng `cageId.status` về trạng thái `"Available"` (trống).
   - `409 Conflict`: Chuồng này đã được giải phóng trước đó.
+
+---
+
+## 10. 📋 Bác Sĩ Khám Lâm Sàng, Ghi Bệnh Án Chuẩn SOAP & Kê Đơn Thuốc (`Medical Records` — `/api/medical-records`)
+*(Tài liệu test từng bước: [bac-si-va-groomer-nhan-ca-va-giai-phong-chuong.md](file:///d:/FA_ki9_FU_Final/FINAL_GRADE/VCMOS_Project/VCMOS_BE/api/quy-trinh-cac-buoc-test/bac-si-va-groomer-nhan-ca-va-giai-phong-chuong.md))*
+
+### 10.1. Bác sĩ bắt đầu ca khám (`POST /api/medical-records/service/:appointmentServiceId/start`)
+- **Method**: `POST`
+- **URL**: `http://localhost:9999/api/medical-records/service/:appointmentServiceId/start`
+- **Auth**: 🔒 Chỉ `Veterinarian` (đúng bác sĩ được phân công `assignedStaffId`)
+- **Body**: Không cần (`none`)
+- **Kết quả mong đợi**:
+  - `200 OK`:
+    - Kiểm tra thứ tự `sequenceNo` theo **`BR-12`** (nếu dịch vụ đứng trước trong cùng đơn hẹn chưa `Done` thì chặn `409`).
+    - Tự động giải phóng chuồng chờ (nếu thú cưng đang nằm trong chuồng chờ lúc đợi khám) theo **`BR-10`**.
+    - Chuyển dịch vụ khám sang **`InProgress`** (ghi nhận `dequeueAt`), chuyển đơn hẹn sang **`InProgress`**, và khởi tạo bản nháp (`Draft`) `MedicalRecord`.
+  - `403 Forbidden`: Không phải bác sĩ được phân công phụ trách ca khám này.
+  - `409 Conflict`: Khách chưa Check-in hoặc dịch vụ đứng trước chưa hoàn thành (`BR-12`).
+
+---
+
+### 10.2. Bác sĩ lưu nháp bệnh án chuẩn SOAP, cập nhật cân nặng & kê đơn thuốc (`PUT /api/medical-records/service/:appointmentServiceId`)
+- **Method**: `PUT`
+- **URL**: `http://localhost:9999/api/medical-records/service/:appointmentServiceId`
+- **Auth**: 🔒 Chỉ `Veterinarian` (đúng bác sĩ được phân công)
+- **Body (`JSON`)**:
+  ```json
+  {
+    "subjectiveNote": "Bỏ ăn 2 ngày, nôn khan buổi sáng",
+    "objectiveNote": "Nhiệt độ 39.2 độ C, niêm mạc hồng nhạt",
+    "assessment": "Viêm dạ dày ruột cấp nhẹ",
+    "plan": "Uống kháng sinh 5 ngày, ăn thức ăn mềm, tái khám sau 7 ngày",
+    "notes": "Theo dõi triệu chứng nôn tại nhà",
+    "weight": 9.2,
+    "prescriptions": [
+      {
+        "productId": "<id_thuốc_Active>",
+        "dosage": "1 viên",
+        "frequency": "2 lần/ngày sau ăn",
+        "instructions": "Nghiền nhỏ trộn thức ăn mềm",
+        "durationDays": 5
+      }
+    ]
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `200 OK`:
+    - Lưu bản nháp (`status: "Draft"`) bệnh án SOAP.
+    - Nếu truyền `weight`: tự động cập nhật cân nặng mới nhất vào hồ sơ gốc của thú cưng (`Pet.weight`).
+    - Kiểm tra danh sách thuốc kê đơn theo **`BR-16`** (chỉ cho phép thuốc đang `Active` / Còn hàng) và chụp snapshot `productNameSnapshot`, `unitSnapshot`.
+  - `400 Bad Request`: Kê thuốc đang `Inactive` (hết hàng) hoặc dữ liệu sai định dạng.
+  - `409 Conflict`: Bệnh án đã bị khóa (`Finalized` - **`BR-14`**).
+
+---
+
+### 10.3. Bác sĩ hoàn tất bệnh án SOAP & kết thúc ca khám (`POST /api/medical-records/service/:appointmentServiceId/complete`)
+- **Method**: `POST`
+- **URL**: `http://localhost:9999/api/medical-records/service/:appointmentServiceId/complete`
+- **Auth**: 🔒 Chỉ `Veterinarian` (đúng bác sĩ được phân công)
+- **Body (`JSON`)** *(có thể gửi bổ sung các trường S-O-A-P còn thiếu so với bản nháp và tùy chọn `waitingCageId`)*:
+  ```json
+  {
+    "subjectiveNote": "Bỏ ăn 2 ngày, nôn khan buổi sáng",
+    "objectiveNote": "Nhiệt độ 39.2 độ C, niêm mạc hồng nhạt",
+    "assessment": "Viêm dạ dày ruột cấp nhẹ",
+    "plan": "Uống kháng sinh 5 ngày, ăn thức ăn mềm, tái khám sau 7 ngày",
+    "notes": "Theo dõi triệu chứng nôn tại nhà",
+    "waitingCageId": null
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `200 OK`:
+    - Bắt buộc đủ cả 4 trường **S - O - A - P** theo **`BR-13`**.
+    - Chặn hoàn tất nếu vẫn còn chỉ định Cận lâm sàng (`SubtaskRequest`) ở trạng thái `Pending` hoặc `InProgress` (**`MSG26`**).
+    - Khóa bệnh án sang **`status: "Finalized"`** (**`BR-14`** — không thể sửa lại sau khi khóa).
+    - Chuyển trạng thái dịch vụ khám sang **`Done`**.
+    - Nếu tất cả dịch vụ trong đơn hẹn đã hoàn tất: tự động chuyển `AppointmentOrder.derivedStatus` sang **`"WaitOwner"`** (Chờ chủ đón & thanh toán) theo **`BR-09`**.
+    - Nếu truyền `waitingCageId`: tự động xếp thú cưng vào chuồng chờ đón theo **`BR-10`**.
+
+---
+
+### 10.4. Xem chi tiết bệnh án SOAP theo ca khám (`GET /api/medical-records/service/:appointmentServiceId`)
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/medical-records/service/:appointmentServiceId`
+- **Auth**: 🔒 `Veterinarian`, `Groomer`, `Receptionist`, `Admin`, hoặc `PetOwner` (chỉ chủ sở hữu thú cưng đó theo **`BR-23`**)
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về chi tiết bệnh án SOAP kèm đơn thuốc và thông tin bác sĩ khám.
+  - `403 Forbidden`: `PetOwner` cố xem bệnh án của thú cưng người khác (**`BR-23`**).
+
+---
+
+### 10.5. Xem tiền sử bệnh lý của thú cưng (`GET /api/medical-records/pet/:petId` — `UC-32`)
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/medical-records/pet/:petId`
+- **Auth**: 🔒 `Veterinarian`, `Groomer`, `Receptionist`, `Admin`, hoặc đúng `PetOwner` sở hữu thú cưng (**`BR-23`**)
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về `{ pet, records }` (danh sách lịch sử các lần khám trước của thú cưng, sắp xếp từ mới nhất đến cũ nhất để bác sĩ mở **Medical History Drawer** tra cứu nhanh).
+
