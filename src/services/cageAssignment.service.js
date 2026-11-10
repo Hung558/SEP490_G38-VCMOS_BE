@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Cage = require('../models/Cage');
 const CageAssignment = require('../models/CageAssignment');
+const { canCageAccommodatePet } = require('./cage.service');
 
 const createError = (statusCode, message) => {
   const err = new Error(message);
@@ -30,7 +31,13 @@ const populateOptions = [
  * If creating the assignment fails afterwards, the cage is rolled back
  * to 'Available'.
  */
-const createCageAssignment = async ({ cageId, orderId, assignedById }) => {
+const createCageAssignment = async ({
+  cageId,
+  orderId,
+  assignedById,
+  petWeight,
+  requiresIsolation,
+}) => {
   assertValidId(cageId, 'ID chuồng');
   assertValidId(orderId, 'ID đơn hẹn');
   assertValidId(assignedById, 'ID người phân công');
@@ -46,6 +53,21 @@ const createCageAssignment = async ({ cageId, orderId, assignedById }) => {
     const exists = await Cage.exists({ _id: cageId });
     if (!exists) throw createError(404, 'Không tìm thấy chuồng');
     throw createError(409, 'Chuồng không ở trạng thái trống (Available)');
+  }
+
+  // BR-11: Kiểm tra tải trọng chuồng theo cân nặng thú cưng và cờ cách ly (nếu có truyền thông tin)
+  if (petWeight !== undefined || requiresIsolation !== undefined) {
+    const check = canCageAccommodatePet(
+      cage.size,
+      petWeight,
+      cage.isIsolated,
+      requiresIsolation,
+      cage.maxWeightKg
+    );
+    if (!check.allowed) {
+      await Cage.updateOne({ _id: cageId }, { $set: { status: 'Available' } });
+      throw createError(400, check.reason);
+    }
   }
 
   try {

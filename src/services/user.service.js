@@ -283,12 +283,18 @@ const changeMyPassword = async (userId, currentPassword, newPassword, otp) => {
   });
 };
 
-// Danh sách nhân viên (Veterinarian, Groomer) có phân trang, lọc theo role/status, tìm theo tên/mã/SĐT
-const listStaff = async ({ role, status = 'Active', search, page = 1, limit = 10 }) => {
+// Danh sách nhân viên (Veterinarian, Groomer) có phân trang, lọc theo role/status, tìm theo tên/mã/SĐT và lọc theo ngày trực workDate
+const listStaff = async ({ role, status = 'Active', search, workDate, page = 1, limit = 10 }) => {
   const filter = {
     role: role || { $in: STAFF_ROLES },
     status,
   };
+
+  if (workDate) {
+    const StaffSchedule = require('../models/StaffSchedule');
+    const schedules = await StaffSchedule.find({ workDate }).select('staffId').lean();
+    filter._id = { $in: schedules.map((s) => s.staffId) };
+  }
 
   const keyword = typeof search === 'string' ? search.trim() : '';
   if (keyword) {

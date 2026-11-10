@@ -95,7 +95,7 @@ const validateChangeMyPassword = ({ otp, currentPassword, newPassword } = {}) =>
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
-const validateListStaff = ({ role, status, search, page, limit } = {}) => {
+const validateListStaff = ({ role, status, search, workDate, page, limit } = {}) => {
   const errors = {};
 
   if (role !== undefined && !STAFF_ROLES.includes(role)) {
@@ -106,6 +106,9 @@ const validateListStaff = ({ role, status, search, page, limit } = {}) => {
   }
   if (search !== undefined && (typeof search !== 'string' || search.trim().length > MAX_SEARCH)) {
     errors.search = `Từ khoá tìm kiếm không được vượt quá ${MAX_SEARCH} ký tự`;
+  }
+  if (workDate !== undefined && (typeof workDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(workDate.trim()))) {
+    errors.workDate = 'Ngày làm việc (workDate) phải đúng định dạng YYYY-MM-DD';
   }
   if (page !== undefined && !/^\d+$/.test(page)) errors.page = 'page phải là số nguyên dương';
   else if (page !== undefined && Number(page) < 1) errors.page = 'page phải là số nguyên dương';

@@ -136,8 +136,9 @@ const listStaff = async (req, res) => {
       role: query.role,
       status: query.status,
       search: query.search,
+      workDate: query.workDate ? query.workDate.trim() : undefined,
       page: query.page ? Number(query.page) : undefined,
-      limit: query.limit ? Number(query.limit) : undefined,
+      limit: query.limit ? Number(query.page ? query.limit : query.limit) : undefined,
     });
 
     res.status(200).json(result);

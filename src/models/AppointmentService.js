@@ -25,6 +25,8 @@ const appointmentServiceSchema = new mongoose.Schema(
       default: 'Booked',
     },
     isEmergency: { type: Boolean, default: false },
+    scheduledStart: { type: String, default: null },
+    scheduledEnd: { type: String, default: null },
     queueNo: { type: Number, default: null },
     enqueueAt: { type: Date, default: null },
     dequeueAt: { type: Date, default: null },
