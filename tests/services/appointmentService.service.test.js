@@ -23,6 +23,7 @@ const {
   createOnlineBooking,
   getAppointmentServicesByOrderId,
   assignStaffToAppointmentService,
+  getAppointmentServicesByAssignedStaffId
 } = require('../../src/services/appointmentService.service');
 
 // Giả lập chuỗi findOne().sort().select().lean()
@@ -522,6 +523,125 @@ describe('getAppointmentServicesByOrderId & assignStaffToAppointmentService', ()
     expect(result).toEqual({
       message: 'Phân công nhân sự cho dịch vụ thành công',
       data: updatedDoc,
+    });
+  });
+});
+
+describe('getAppointmentServicesByAssignedStaffId', () => {
+  // Giả lập chuỗi find().populate()...sort().lean()
+  const mockFindChain = (result) => {
+    const chain = {
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(result),
+    };
+    AppointmentService.find.mockReturnValue(chain);
+    return chain;
+  };
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  describe('bộ lọc', () => {
+    it('chỉ lọc theo assignedStaffId khi không truyền status', async () => {
+      mockFindChain([]);
+
+      await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' });
+
+      expect(AppointmentService.find).toHaveBeenCalledWith({ assignedStaffId: 'staff-1' });
+    });
+
+    it('lọc thêm theo status khi có truyền status', async () => {
+      mockFindChain([]);
+
+      await getAppointmentServicesByAssignedStaffId({
+        assignedStaffId: 'staff-1',
+        status: 'Waiting',
+      });
+
+      expect(AppointmentService.find).toHaveBeenCalledWith({
+        assignedStaffId: 'staff-1',
+        status: 'Waiting',
+      });
+    });
+
+    it.each([undefined, ''])('bỏ qua status khi giá trị là %p', async (status) => {
+      mockFindChain([]);
+
+      await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1', status });
+
+      expect(AppointmentService.find.mock.calls[0][0]).not.toHaveProperty('status');
+    });
+  });
+
+  describe('populate, sort và lean', () => {
+    it('populate serviceId, orderId, preferredStaffId và assignedStaffId', async () => {
+      const chain = mockFindChain([]);
+
+      await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' });
+
+      expect(chain.populate).toHaveBeenCalledTimes(4);
+      expect(chain.populate).toHaveBeenCalledWith('serviceId');
+      expect(chain.populate).toHaveBeenCalledWith('orderId');
+      expect(chain.populate).toHaveBeenCalledWith('preferredStaffId', 'code fullName role status');
+      expect(chain.populate).toHaveBeenCalledWith('assignedStaffId', 'code fullName role status');
+    });
+
+    it('sắp xếp theo queueNo tăng dần rồi đến createdAt tăng dần', async () => {
+      const chain = mockFindChain([]);
+
+      await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' });
+
+      expect(chain.sort).toHaveBeenCalledWith({ queueNo: 1, createdAt: 1 });
+    });
+
+    it('dùng lean() để trả về object thuần', async () => {
+      const chain = mockFindChain([]);
+
+      await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' });
+
+      expect(chain.lean).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('kết quả trả về', () => {
+    it('trả về message tiếng Việt và danh sách dịch vụ của nhân viên', async () => {
+      const items = [
+        { _id: 'as-1', assignedStaffId: { _id: 'staff-1' }, status: 'Waiting', queueNo: 1 },
+        { _id: 'as-2', assignedStaffId: { _id: 'staff-1' }, status: 'Waiting', queueNo: 2 },
+      ];
+      mockFindChain(items);
+
+      const result = await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' });
+
+      expect(result).toEqual({
+        message: 'Lấy danh sách dịch vụ của nhân viên thành công',
+        data: items,
+      });
+    });
+
+    it('trả về mảng rỗng khi nhân viên chưa được phân công dịch vụ nào', async () => {
+      mockFindChain([]);
+
+      const result = await getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' });
+
+      expect(result.data).toEqual([]);
+    });
+  });
+
+  describe('xử lý lỗi', () => {
+    it('ném lại nguyên lỗi từ database', async () => {
+      const dbError = new Error('DB down');
+      AppointmentService.find.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockRejectedValue(dbError),
+      });
+
+      await expect(
+        getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' })
+      ).rejects.toBe(dbError);
     });
   });
 });

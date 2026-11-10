@@ -3,12 +3,14 @@ const {
   createOnlineBooking,
   getAppointmentServicesByOrderId,
   assignStaffToAppointmentService,
+  getAppointmentServicesByAssignedStaffId
 } = require('../services/appointmentService.service');
 const {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
   validateGetServicesByOrderId,
   validateAssignStaffToService,
+  validateGetServicesByAssignedStaffId
 } = require('../validators/appointmentService.validator');
 
 const handleError = (res, err) => {
@@ -83,9 +85,28 @@ async function assignStaffToAppointmentServiceController(req, res) {
   }
 }
 
+/**
+ * GET /appointment-services/my-queue?status=...
+ * Bác sĩ / Groomer xem danh sách dịch vụ được phân công cho chính mình
+ * Query: { status? }
+ */
+async function getAppointmentServicesByAssignedStaffIdController(req, res) {
+  try {
+    const payload = await validateGetServicesByAssignedStaffId({
+      assignedStaffId: req.user.id, // lấy từ token (protect), không nhận từ query
+      status: req.query && req.query.status,
+    });
+    const { message, data } = await getAppointmentServicesByAssignedStaffId(payload);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   createOnlineAppointmentServiceController,
   createOnlineBookingController,
   getAppointmentServicesByOrderIdController,
   assignStaffToAppointmentServiceController,
+  getAppointmentServicesByAssignedStaffIdController
 };

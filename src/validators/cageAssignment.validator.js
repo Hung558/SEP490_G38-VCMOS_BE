@@ -65,6 +65,17 @@ const validateCageAssignmentId = (id) => {
 };
 
 /**
+ * Validate the order id used to look up the open assignment of an order
+ * (e.g. req.params.orderId).
+ * Returns the trimmed id string.
+ */
+const validateOrderId = (orderId) => {
+  const error = checkObjectId(orderId, 'ID đơn hẹn');
+  if (error) throw new ValidationError([error]);
+  return orderId.trim();
+};
+
+/**
  * Validate optional list filters from the query string (req.query).
  * Supported: cageId, orderId, active ('true' | 'false').
  * Empty values are ignored; unknown keys are dropped.
@@ -107,5 +118,6 @@ module.exports = {
   ValidationError,
   validateCreateCageAssignment,
   validateCageAssignmentId,
+  validateOrderId,
   validateListCageAssignmentsQuery,
 };

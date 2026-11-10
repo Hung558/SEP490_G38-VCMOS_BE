@@ -175,9 +175,39 @@ async function assignStaffToAppointmentService({ appointmentServiceId, assignedS
   };
 }
 
+/**
+ * Lấy tất cả dịch vụ trong lịch hẹn được phân công cho một nhân viên (Bác sĩ / Groomer).
+ *
+ * Kết quả được sắp xếp theo thứ tự hàng đợi (`queueNo`, tăng dần); các dịch vụ chưa có
+ * `queueNo` được xếp cuối, sau đó theo `createdAt`.
+ *
+ * @param {Object} payload
+ * @param {string} payload.assignedStaffId - Id của nhân viên được phân công
+ * @param {string} [payload.status] - Lọc theo trạng thái dịch vụ (Booked, Waiting, InProgress, Done, Cancelled, Overdue)
+ * @returns {Promise<{ message: string, data: AppointmentService[] }>}
+ */
+async function getAppointmentServicesByAssignedStaffId({ assignedStaffId, status }) {
+  const filter = { assignedStaffId };
+  if (status) filter.status = status;
+
+  const services = await AppointmentService.find(filter)
+    .populate('serviceId')
+    .populate('orderId')
+    .populate('preferredStaffId', 'code fullName role status')
+    .populate('assignedStaffId', 'code fullName role status')
+    .sort({ queueNo: 1, createdAt: 1 })
+    .lean();
+
+  return {
+    message: 'Lấy danh sách dịch vụ của nhân viên thành công',
+    data: services,
+  };
+}
+
 module.exports = {
   createOnlineAppointmentService,
   createOnlineBooking,
   getAppointmentServicesByOrderId,
   assignStaffToAppointmentService,
+  getAppointmentServicesByAssignedStaffId
 };
