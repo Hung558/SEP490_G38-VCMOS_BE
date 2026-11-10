@@ -5,6 +5,7 @@ const {
   createOnlineBookingController,
   getAppointmentServicesByOrderIdController,
   assignStaffToAppointmentServiceController,
+  getAppointmentServicesByAssignedStaffIdController
 } = require('../controllers/appointmentService.controller');
 
 const router = express.Router();
@@ -18,5 +19,8 @@ router.get('/', protect, authorize('Receptionist', 'Admin'), getAppointmentServi
 
 // Lễ tân phân công Bác sĩ / Groomer cho dịch vụ trong lịch hẹn
 router.patch('/:id/assign-staff', protect, authorize('Receptionist'), assignStaffToAppointmentServiceController);
+
+// Bác sĩ / Groomer xem danh sách dịch vụ được phân công cho chính mình (?status=...)
+router.get('/my-queue', protect, authorize('Veterinarian', 'Groomer'), getAppointmentServicesByAssignedStaffIdController);
 
 module.exports = router;

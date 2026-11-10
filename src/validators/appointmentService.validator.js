@@ -7,6 +7,7 @@ const User = require('../models/User');
 const BLOCKED_ORDER_STATUSES = ['Done', 'Cancelled', 'Overdue'];
 const BLOCKED_SERVICE_STATUSES = ['InProgress', 'Done', 'Cancelled', 'Overdue'];
 const CLINICAL_STAFF_ROLES = ['Veterinarian', 'Groomer'];
+const SERVICE_STATUSES = ['Booked', 'Waiting', 'InProgress', 'Done', 'Cancelled', 'Overdue'];
 
 const DEFAULT_ONLY_FIELDS = [
   'preferredStaffId',
@@ -271,9 +272,41 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
   };
 }
 
+/**
+ * Kiểm tra dữ liệu khi lấy danh sách dịch vụ được phân công cho 1 nhân viên (Bác sĩ / Groomer).
+ * Trả về payload đã kiểm tra nếu hợp lệ, ném lỗi (có `statusCode`) nếu không hợp lệ.
+ *
+ * @param {Object} payload - { assignedStaffId, status? }
+ * @returns {Promise<{ assignedStaffId: string, status?: string }>}
+ * @throws {Error} lỗi với `statusCode` 400 | 404 và thông báo tiếng Việt
+ */
+async function validateGetServicesByAssignedStaffId(payload) {
+  const data = payload || {};
+  const { assignedStaffId, status } = data;
+
+  // 1. Kiểm tra định dạng
+  if (!assignedStaffId) throw createError('assignedStaffId là bắt buộc');
+  if (!isValidObjectId(assignedStaffId)) throw createError('assignedStaffId không hợp lệ');
+
+  if (status !== undefined && !SERVICE_STATUSES.includes(status)) {
+    throw createError(`status phải là một trong: ${SERVICE_STATUSES.join(', ')}`);
+  }
+
+  // 2. Kiểm tra nhân viên tồn tại và đúng role Bác sĩ / Groomer
+  //    (không bắt buộc Active để vẫn xem được lịch sử của nhân viên đã ngừng hoạt động)
+  const staff = await User.findById(assignedStaffId).select('role').lean();
+  if (!staff) throw createError('Không tìm thấy nhân viên', 404);
+  if (!CLINICAL_STAFF_ROLES.includes(staff.role)) {
+    throw createError('Nhân viên phải có vai trò Veterinarian hoặc Groomer');
+  }
+
+  return { assignedStaffId, status };
+}
+
 module.exports = {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
   validateGetServicesByOrderId,
   validateAssignStaffToService,
+  validateGetServicesByAssignedStaffId
 };
