@@ -17,6 +17,7 @@
 6. [Quản Lý Sản Phẩm, Thuốc & Vật Tư (`Products` — `/api/products`)](#6--quản-lý-sản-phẩm-thuốc--vật-tư-products--apiproducts)
 7. [Quản Lý Chuồng Nuôi & Phân Công Chuồng (`Cages` — `/api/cages` & `/api/cage-assignments`)](#7--quản-lý-chuồng-nuôi--phân-công-chuồng-cages--apicages--apicage-assignments)
 8. [Đặt Lịch Hẹn Online & Lễ Tân Check-in (`Appointments` — `/api/appointment-orders` & `/api/appointment-services`)](#8--đặt-lịch-hẹn-online--lễ-tân-check-in-appointments)
+9. [Bác Sĩ & Groomer Nhận Ca, Tra Cứu & Giải Phóng Chuồng (`Work Queue` — `/api/appointment-services/my-queue` & `/api/cage-assignments`)](#9--bác-sĩ--groomer-nhận-ca-tra-cứu--giải-phóng-chuồng-work-queue)
 
 ---
 
@@ -656,3 +657,46 @@
     - Tạo thú cưng mới (`petInfo`) hoặc dùng lại thú cưng cũ (`petId`).
     - Tạo đơn hẹn `AppointmentOrder` với `isOnline: false`, **`derivedStatus: "CheckedIn"`** và `checkedInAt` ngay lập tức.
     - Dịch vụ có `assignedStaffId` tự động nhảy sang **`status: "Waiting"`** kèm `queueNo` và `enqueueAt`.
+
+
+---
+
+## 9. 🩺 Bác Sĩ & Groomer Nhận Ca, Tra Cứu & Giải Phóng Chuồng (`Work Queue`)
+*(Tài liệu test từng bước: [bac-si-va-groomer-nhan-ca-va-giai-phong-chuong.md](file:///d:/FA_ki9_FU_Final/FINAL_GRADE/VCMOS_Project/VCMOS_BE/api/quy-trinh-cac-buoc-test/bac-si-va-groomer-nhan-ca-va-giai-phong-chuong.md))*
+
+### 9.1. Bác sĩ / Groomer xem hàng đợi làm việc của mình (`GET /api/appointment-services/my-queue`)
+*(Tài liệu chi tiết: [get-my-queue.md](file:///d:/FA_ki9_FU_Final/FINAL_GRADE/VCMOS_Project/VCMOS_BE/api/appointment-services/get-my-queue.md))*
+
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/appointment-services/my-queue?status=Waiting`
+- **Auth**: 🔒 `Veterinarian` hoặc `Groomer`
+- **Query tùy chọn**: `status` (Một trong: `Booked`, `Waiting`, `InProgress`, `Done`, `Cancelled`, `Overdue`. Nếu không truyền thì lấy tất cả).
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về danh sách dịch vụ được phân công cho nhân viên đang đăng nhập, tự động sắp xếp theo thứ tự hàng đợi `queueNo` tăng dần. Đã populate chi tiết đơn hẹn `orderId` (kèm thú cưng và chủ nuôi) và dịch vụ `serviceId`.
+  - `400 Bad Request`: `status` không hợp lệ.
+  - `403 Forbidden`: Người dùng không có role `Veterinarian` hoặc `Groomer`.
+
+---
+
+### 9.2. Bác sĩ / Groomer tra cứu vị trí chuồng của thú cưng theo đơn hẹn (`GET /api/cage-assignments/order/:orderId`)
+*(Tài liệu chi tiết: [get-cage-assignment-by-order.md](file:///d:/FA_ki9_FU_Final/FINAL_GRADE/VCMOS_Project/VCMOS_BE/api/cage-assignments/get-cage-assignment-by-order.md))*
+
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/cage-assignments/order/:orderId`
+- **Auth**: 🔒 `Veterinarian` hoặc `Groomer`
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về thông tin phân công chuồng đang mở (`releasedAt = null`) của đơn hẹn, populate thông tin chuồng `cageId` (đang ở trạng thái `Occupied`), nhãn chuồng `label` để bác sĩ đến đón bé vào phòng khám.
+  - `404 Not Found`: Đơn hẹn này không xếp chuồng.
+
+---
+
+### 9.3. Bác sĩ / Groomer giải phóng chuồng lưu giữ (`PATCH /api/cage-assignments/:id/release`)
+*(Tài liệu chi tiết: [release-cage-assignment.md](file:///d:/FA_ki9_FU_Final/FINAL_GRADE/VCMOS_Project/VCMOS_BE/api/cage-assignments/release-cage-assignment.md))*
+
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/cage-assignments/:id/release`
+- **Auth**: 🔒 `Veterinarian` hoặc `Groomer`
+- **Body**: Không cần body (`none`)
+- **Kết quả mong đợi**:
+  - `200 OK`: Ghi nhận `releasedAt` thành thời gian hiện tại và tự động chuyển chuồng `cageId.status` về trạng thái `"Available"` (trống).
+  - `409 Conflict`: Chuồng này đã được giải phóng trước đó.

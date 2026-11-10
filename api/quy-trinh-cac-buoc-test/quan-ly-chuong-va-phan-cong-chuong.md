@@ -123,3 +123,30 @@ Tài liệu hướng dẫn test từng bước từ A → Z trên **Postman** ch
      http://localhost:9999/api/cage-assignments/<ASSIGNMENT_ID>
      ```
 
+
+---
+
+## BƯỚC 7: Bác sĩ / Groomer tra cứu vị trí chuồng của thú cưng theo đơn hẹn (`GET /api/cage-assignments/order/:orderId`)
+
+> **Mục đích**: Khi nhận ca khám, Bác sĩ / Groomer gọi API này để biết thú cưng trong đơn hẹn `<ORDER_ID>` đang nằm ở chuồng nào (`label`, `size`) để ra đón.
+
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/cage-assignments/order/<ORDER_ID>`
+- **Authorization**: `Bearer Token` (dán token của `Veterinarian` hoặc `Groomer`)
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về thông tin phân công chuồng đang mở (`releasedAt = null`), populate chi tiết `cageId` (đang `Occupied`).
+  - `404 Not Found`: Nếu đơn hẹn này không xếp chuồng.
+
+---
+
+## BƯỚC 8: Bác sĩ / Groomer giải phóng chuồng khi đón thú cưng ra (`PATCH /api/cage-assignments/:id/release`)
+
+> **Mục đích**: Khi đón thú cưng ra khỏi chuồng vào phòng khám hoặc khi kết thúc chăm sóc, Bác sĩ / Groomer bấm giải phóng chuồng. Hệ thống ghi nhận `releasedAt` và tự động chuyển chuồng về trạng thái `Available`.
+
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/cage-assignments/<ASSIGNMENT_ID>/release`
+- **Authorization**: `Bearer Token` (dán token của `Veterinarian` hoặc `Groomer`)
+- **Body**: Không cần body
+- **Kết quả mong đợi**:
+  - `200 OK`: `"Giải phóng chuồng thành công"`. Trạng thái `cageId.status` tự động chuyển về `"Available"`.
+  - `409 Conflict`: Nếu chuồng này đã được giải phóng trước đó.
