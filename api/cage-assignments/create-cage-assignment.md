@@ -75,15 +75,11 @@ The person who assigns the cage (`assignedById`) is taken from the token of the 
 
 ### 400 Bad Request: validation failed
 
-All problems found are reported at once.
+All problems found are reported at once. Can also be triggered when the cage size does not accommodate pet weight according to BR-11 (S: $\le$5kg, M: 5–15kg, L: 15–30kg, XL: >30kg) or when isolation requirement does not match (`isIsolated`).
 
 ```json
 {
-  "message": "ID chuồng là bắt buộc; ID đơn hẹn không hợp lệ",
-  "errors": [
-    "ID chuồng là bắt buộc",
-    "ID đơn hẹn không hợp lệ"
-  ]
+  "message": "Chuồng cỡ S (tối đa 5kg) không phù hợp với thú cưng nặng 8.5kg"
 }
 ```
 

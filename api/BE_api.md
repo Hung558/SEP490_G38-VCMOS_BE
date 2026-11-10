@@ -57,7 +57,9 @@
 - **Kết quả mong đợi**:
   - `200 OK`: Trả về `{ token, user }`. 👉 **Copy chuỗi `token` này để dùng cho các API bên dưới.**
   - `401 Unauthorized`: Sai SĐT/email hoặc mật khẩu.
-  - `403 Forbidden`: Tài khoản đang bị khóa (`Locked`) hoặc ngừng hoạt động (`Inactive`).
+  - `403 Forbidden`: 
+    - Tài khoản đang bị khóa (`Locked`) hoặc ngừng hoạt động (`Inactive`).
+    - Nhập sai mật khẩu 5 lần liên tiếp sẽ bị tạm khóa 30 phút theo **`BR-03`** (`MSG12`).
 
 ---
 
@@ -192,6 +194,7 @@
   - `role`: `Veterinarian` hoặc `Groomer`
   - `status`: `Active` (mặc định), `Inactive`, `Locked`
   - `search`: Tìm theo họ tên, mã `code`, SĐT
+  - `workDate`: Lọc theo ngày làm việc (`YYYY-MM-DD`) chỉ lấy nhân sự có ca trực trong ngày đó
   - `page`, `limit`: Phân trang
 - **Kết quả mong đợi**:
   - `200 OK`: Trả về `{ items, pagination }`.
@@ -203,7 +206,7 @@
 | Method | Endpoint | Quyền | Mô tả nhanh |
 | :--- | :--- | :--- | :--- |
 | `GET` | `http://localhost:9999/api/pets` | 🔒 `PetOwner` | Xem danh sách thú cưng của chính mình |
-| `GET` | `http://localhost:9999/api/pets/:id` | 🔒 `PetOwner` | Xem chi tiết 1 thú cưng của mình |
+| `GET` | `http://localhost:9999/api/pets/:id` | 🔒 `PetOwner`, Nhân sự PK | Xem chi tiết 1 thú cưng (Chủ nuôi xem của mình, Nhân sự PK xem mọi thú cưng) |
 | `POST` | `http://localhost:9999/api/pets` | 🔒 `PetOwner` | Thêm thú cưng mới (`multipart/form-data` hoặc `JSON`, tự sinh `PET-XXXXXX`) |
 | `PUT` | `http://localhost:9999/api/pets/:id` | 🔒 `PetOwner` | Cập nhật thông tin / ảnh thú cưng của mình |
 | `DELETE` | `http://localhost:9999/api/pets/:id` | 🔒 `PetOwner` | Xóa mềm thú cưng (`status: 'Deleted'`) |
@@ -471,11 +474,12 @@
   {
     "label": "A-101",
     "size": "M",
+    "zone": "Holding",
     "isIsolated": false
   }
   ```
 - **Kết quả mong đợi**:
-  - `201 Created`: Tạo chuồng với `status: "Available"`. (`size` nhận `S`, `M`, `L`, `XL`). Trùng `label` trả `409`.
+  - `201 Created`: Tạo chuồng với `status: "Available"`. (`size` nhận `S`, `M`, `L`, `XL`; `zone` nhận `Holding`, `InpatientWard`). Trùng `label` trả `409`.
 
 ---
 
@@ -516,7 +520,8 @@
   ```
 - **Kết quả mong đợi**:
   - `201 Created`: Xếp chuồng thành công, chuồng tự động chuyển sang `"Occupied"`.
-  - `409 Conflict`: Chuồng không ở trạng thái `Available`.
+  - `400 Bad Request`: Kích thước chuồng không đủ tải trọng theo cân nặng thú cưng (S $\le$ 5kg, M $\le$ 15kg, L $\le$ 30kg, XL > 30kg) hoặc không khớp cờ cách ly (**`BR-11`**).
+  - `409 Conflict`: Chuồng không ở trạng thái `Available` hoặc đã có phân công đang hoạt động.
 
 ---
 
@@ -576,13 +581,24 @@
 
 ---
 
-### 8.4. `Receptionist` bấm Check-in khi khách đến phòng khám (`SCR-16`)
+### 8.4. `Receptionist` bấm Check-in khi khách đến phòng khám (`SCR-16`, `UC-22`, `BR-09`, `BR-11`)
 - **Method**: `PATCH`
 - **URL**: `http://localhost:9999/api/appointment-orders/:id/check-in`
 - **Auth**: 🔒 Chỉ `Receptionist`
-- **Body**: Không cần
+- **Body (`JSON` tùy chọn)**:
+  ```json
+  {
+    "cageId": "<id_chuồng_trống_nếu_muốn_gán_ngay>",
+    "requiresIsolation": false
+  }
+  ```
+  *(Nếu khách tự bế thú cưng ngồi chờ ở phòng khách thì gửi body rỗng `{}`)*.
 - **Kết quả mong đợi**:
-  - `200 OK`: Chuyển `derivedStatus` từ `"Booked"` sang **`"CheckedIn"`** và ghi nhận thời gian `checkedInAt`.
+  - `200 OK`: 
+    - Chuyển `derivedStatus` từ `"Booked"` sang **`"CheckedIn"`** và ghi nhận thời gian `checkedInAt`.
+    - Tự động chuyển các dịch vụ đã phân công nhân sự sang **`"Waiting"`** để vào hàng đợi khám.
+    - Nếu có truyền `cageId`: Kiểm tra tải trọng chuồng theo cân nặng thú cưng (`BR-11`: S $\le$ 5kg, M $\le$ 15kg, L $\le$ 30kg, XL > 30kg) và cờ cách ly, sau đó tự động gán chuồng sang `"Occupied"`.
+  - `400 Bad Request`: Chuồng chọn không đủ kích cỡ chứa thú cưng hoặc không khớp cờ cách ly (`BR-11`).
   - `409 Conflict`: Nếu đơn hẹn đã check-in rồi hoặc đang ở trạng thái khác `"Booked"`.
 
 ---
@@ -673,7 +689,7 @@
 - **Auth**: 🔒 `Veterinarian` hoặc `Groomer`
 - **Query tùy chọn**: `status` (Một trong: `Booked`, `Waiting`, `InProgress`, `Done`, `Cancelled`, `Overdue`. Nếu không truyền thì lấy tất cả).
 - **Kết quả mong đợi**:
-  - `200 OK`: Trả về danh sách dịch vụ được phân công cho nhân viên đang đăng nhập, tự động sắp xếp theo thứ tự hàng đợi `queueNo` tăng dần. Đã populate chi tiết đơn hẹn `orderId` (kèm thú cưng và chủ nuôi) và dịch vụ `serviceId`.
+  - `200 OK`: Trả về danh sách dịch vụ được phân công cho nhân viên đang đăng nhập, tự động ưu tiên ca cấp cứu lên đầu (`isEmergency: -1`), sau đó theo số thứ tự hàng đợi `queueNo` và thời điểm xếp hàng `enqueueAt` tăng dần. Đã populate chi tiết đơn hẹn `orderId` (kèm thú cưng và chủ nuôi) và dịch vụ `serviceId`.
   - `400 Bad Request`: `status` không hợp lệ.
   - `403 Forbidden`: Người dùng không có role `Veterinarian` hoặc `Groomer`.
 

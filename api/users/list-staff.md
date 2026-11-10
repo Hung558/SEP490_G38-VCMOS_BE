@@ -19,6 +19,7 @@ All parameters are optional.
 | `role` | string | both roles | Filter by role. Allowed values: `Veterinarian`, `Groomer`. Any other value (including `Admin`, `Receptionist`, `PetOwner`) is rejected with `400`. |
 | `status` | string | `Active` | Filter by account status. Allowed values: `Active`, `Inactive`, `Locked`. |
 | `search` | string | none | Keyword matched against `fullName`, `code` and `phone` (partial match, case-insensitive). Leading/trailing spaces are trimmed. Maximum 100 characters. Special characters are matched literally. |
+| `workDate` | string | none | Date formatted as `YYYY-MM-DD`. Filters only staff members who have a working shift scheduled on that date in `StaffSchedule`. |
 | `page` | integer | `1` | Page number, starting from 1. |
 | `limit` | integer | `10` | Number of items per page. Between 1 and 100. |
 
