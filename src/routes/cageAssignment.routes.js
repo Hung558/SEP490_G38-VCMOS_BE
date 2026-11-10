@@ -4,11 +4,17 @@ const cageAssignmentController = require('../controllers/cageAssignment.controll
 
 const router = express.Router();
 
-// All routes require a logged-in user with the Receptionist role
-router.use(protect, authorize('Receptionist'));
+// All routes require a logged-in user
+router.use(protect);
 
-router.get('/', cageAssignmentController.getAllCageAssignments);
-router.get('/:id', cageAssignmentController.getCageAssignmentById);
-router.post('/', cageAssignmentController.createCageAssignment);
+router.get('/', authorize('Receptionist'), cageAssignmentController.getAllCageAssignments);
+router.get('/:id', authorize('Receptionist'), cageAssignmentController.getCageAssignmentById);
+router.post('/', authorize('Receptionist'), cageAssignmentController.createCageAssignment);
+
+// Veterinarian / Groomer: look up the open cage assignment of an order
+router.get('/order/:orderId', authorize('Veterinarian', 'Groomer'), cageAssignmentController.getCageAssignmentByOrderId);
+
+// Veterinarian / Groomer: release a pet from its cage (cage becomes Available)
+router.patch('/:id/release', authorize('Veterinarian', 'Groomer'), cageAssignmentController.releaseCageAssignment);
 
 module.exports = router;

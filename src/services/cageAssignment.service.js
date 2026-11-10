@@ -104,8 +104,72 @@ const getCageAssignmentById = async (id) => {
   return assignment;
 };
 
+/**
+ * Get the CageAssignment of an order.
+ * An order can have several assignments over time (e.g. it was moved to
+ * another cage), so this returns the most recent one, which is the open
+ * assignment (releasedAt = null) if there is one.
+ */
+const getCageAssignmentByOrderId = async (orderId) => {
+  assertValidId(orderId, 'ID đơn hẹn');
+
+  const assignment = await CageAssignment.findOne({ orderId, releasedAt: null })
+    .sort({ assignedAt: -1 })
+    .populate(populateOptions);
+  if (!assignment) {
+    throw createError(404, 'Đơn hẹn này chưa có phân công chuồng đang hoạt động');
+  }
+
+  return assignment;
+};
+
+/**
+ * Release a pet from its cage.
+ * - Closes the assignment by setting releasedAt = now.
+ * - Sets the cage status back to 'Available'.
+ *
+ * The assignment is closed atomically (findOneAndUpdate with releasedAt: null
+ * as a condition) so two concurrent requests cannot release it twice.
+ * If updating the cage fails afterwards, the assignment is re-opened so the
+ * data stays consistent.
+ */
+const releaseCageAssignment = async (id) => {
+  assertValidId(id, 'ID phân công chuồng');
+
+  // Atomically close the assignment: only succeeds if it is still open
+  const assignment = await CageAssignment.findOneAndUpdate(
+    { _id: id, releasedAt: null },
+    { $set: { releasedAt: new Date() } },
+    { new: true }
+  );
+
+  if (!assignment) {
+    const exists = await CageAssignment.exists({ _id: id });
+    if (!exists) throw createError(404, 'Không tìm thấy phân công chuồng');
+    throw createError(409, 'Phân công chuồng này đã được giải phóng trước đó');
+  }
+
+  try {
+    await Cage.updateOne(
+      { _id: assignment.cageId },
+      { $set: { status: 'Available' } }
+    );
+  } catch (err) {
+    // Roll back so the assignment is not closed while the cage stays Occupied
+    await CageAssignment.updateOne(
+      { _id: id },
+      { $set: { releasedAt: null } }
+    );
+    throw err;
+  }
+
+  return await assignment.populate(populateOptions);
+};
+
 module.exports = {
   createCageAssignment,
   getAllCageAssignments,
   getCageAssignmentById,
+  getCageAssignmentByOrderId,
+  releaseCageAssignment
 };
