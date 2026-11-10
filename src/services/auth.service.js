@@ -118,18 +118,52 @@ const register = async ({ fullName, phone, email, password }) => {
   throw httpError(500, 'Không thể tạo mã người dùng, vui lòng thử lại');
 };
 
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCK_DURATION_MS = 30 * 60 * 1000; // 30 phút (BR-03, MSG12)
+
 // identifier = số điện thoại hoặc email
 const login = async ({ identifier, password }) => {
   identifier = identifier.trim();
   const query = PHONE_REGEX.test(identifier) ? { phone: identifier } : { email: identifier.toLowerCase() };
 
   const user = await User.findOne(query).select('+passwordHash');
+
+  // BR-03 (MSG12): Kiểm tra nếu tài khoản đang trong thời gian bị tạm khóa 30 phút do sai mật khẩu 5 lần
+  if (user && user.lockUntil && new Date(user.lockUntil) > new Date()) {
+    throw httpError(
+      403,
+      'Bạn đã nhập sai mật khẩu quá 5 lần liên tiếp. Tài khoản đang bị tạm khóa trong 30 phút'
+    );
+  }
+
   // Không phân biệt "sai tài khoản" hay "sai mật khẩu" để tránh dò tài khoản
   if (!user || !user.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
+    if (user && user.passwordHash) {
+      const nextAttempts = (user.failedLoginAttempts || 0) + 1;
+      user.failedLoginAttempts = nextAttempts;
+
+      if (nextAttempts >= MAX_LOGIN_ATTEMPTS) {
+        user.lockUntil = new Date(Date.now() + LOCK_DURATION_MS);
+        if (typeof user.save === 'function') await user.save();
+        throw httpError(
+          403,
+          'Bạn đã nhập sai mật khẩu 5 lần liên tiếp. Tài khoản bị tạm khóa trong 30 phút'
+        );
+      }
+
+      if (typeof user.save === 'function') await user.save();
+    }
     throw httpError(401, 'Thông tin đăng nhập không chính xác');
   }
   if (user.status === 'Locked') throw httpError(403, 'Tài khoản đã bị khoá, vui lòng liên hệ quản trị viên');
   if (user.status === 'Inactive') throw httpError(403, 'Tài khoản đã ngừng hoạt động');
+
+  // Đăng nhập thành công -> đặt lại bộ đếm số lần sai mật khẩu về 0
+  if (user.failedLoginAttempts > 0 || user.lockUntil) {
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+    if (typeof user.save === 'function') await user.save();
+  }
 
   return { token: generateToken(user), user: toPublicUser(user) };
 };

@@ -6,6 +6,8 @@ const appointmentOrderSchema = new mongoose.Schema(
     petId: { type: mongoose.Schema.Types.ObjectId, ref: 'Pet', required: true },
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     date: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ }, // YYYY-MM-DD
+    slotStart: { type: String, default: null },
+    slotEnd: { type: String, default: null },
     note: String,
     isOnline: { type: Boolean, default: false },
     derivedStatus: {

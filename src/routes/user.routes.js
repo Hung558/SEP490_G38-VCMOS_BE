@@ -1,6 +1,6 @@
 const express = require('express');
 const userController = require('../controllers/user.controller');
-const { protect } = require('../middlewares/auth.middleware');
+const { protect, authorize } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
@@ -18,6 +18,11 @@ router.put('/me/password', protect, userController.changeMyPassword);
 router.post('/forgot-password', userController.forgotPassword);
 router.post('/reset-password', userController.resetPassword);
 
-router.get('/staff', protect, userController.listStaff);
+router.get(
+  '/staff',
+  protect,
+  authorize('PetOwner', 'Receptionist', 'Veterinarian', 'Groomer', 'Admin'),
+  userController.listStaff
+);
 
 module.exports = router;

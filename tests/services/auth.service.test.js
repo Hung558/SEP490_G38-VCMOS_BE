@@ -356,6 +356,23 @@ describe('login', () => {
       expect(unknown.statusCode).toBe(wrongPw.statusCode);
       expect(unknown.message).toBe(wrongPw.message);
     });
+
+    it('locks the account for 30 minutes on the 5th consecutive failed password attempt (BR-03)', async () => {
+      const userDoc = makeUserDoc({ failedLoginAttempts: 4, save: jest.fn() });
+      mockFindOneResolves(userDoc);
+      bcrypt.compare.mockResolvedValue(false);
+
+      await expect(
+        authService.login({ identifier: 'a@example.com', password: 'wrong' })
+      ).rejects.toMatchObject({
+        statusCode: 403,
+        message: expect.stringMatching(/5 lần liên tiếp.*30 phút/),
+      });
+
+      expect(userDoc.failedLoginAttempts).toBe(5);
+      expect(userDoc.lockUntil).toBeInstanceOf(Date);
+      expect(userDoc.save).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('account status', () => {

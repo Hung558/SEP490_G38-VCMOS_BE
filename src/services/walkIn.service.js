@@ -331,13 +331,15 @@ const createWalkInBooking = async (receptionistId, payload) => {
     createdServices.push(populated);
   }
 
-  // 8. Gán chuồng lưu giữ nếu Lễ tân chọn chuồng ngay trên Modal Walk-in (SCR-18 / UC-29)
+  // 8. Gán chuồng lưu giữ nếu Lễ tân chọn chuồng ngay trên Modal Walk-in (SCR-18 / UC-29 / BR-11)
   let cageAssignment = null;
   if (cageId) {
     cageAssignment = await createCageAssignment({
       cageId,
       orderId: appointment._id,
       assignedById: receptionistId,
+      petWeight: pet?.weight,
+      requiresIsolation: false,
     });
   }
 

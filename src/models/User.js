@@ -16,6 +16,8 @@ const userSchema = new mongoose.Schema(
       default: 'PetOwner',
     },
     status: { type: String, enum: ['Active', 'Inactive', 'Locked'], default: 'Active' },
+    failedLoginAttempts: { type: Number, default: 0 },
+    lockUntil: { type: Date, default: null },
   },
   { timestamps: true }
 );

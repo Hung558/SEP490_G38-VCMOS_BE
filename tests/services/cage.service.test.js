@@ -226,3 +226,27 @@ describe('updateCage', () => {
     await expect(cageService.updateCage(CAGE_ID, { size: 'L' })).rejects.toBe(dbError);
   });
 });
+
+describe('canCageAccommodatePet (BR-11)', () => {
+  it('cho phép thú cưng có cân nặng nằm trong giới hạn kích thước chuồng (S <= 5kg, M <= 15kg, L <= 30kg, XL > 30kg)', () => {
+    expect(cageService.canCageAccommodatePet('S', 4.5, false, false).allowed).toBe(true);
+    expect(cageService.canCageAccommodatePet('M', 12, false, false).allowed).toBe(true);
+    expect(cageService.canCageAccommodatePet('L', 25, false, false).allowed).toBe(true);
+    expect(cageService.canCageAccommodatePet('XL', 45, false, false).allowed).toBe(true);
+  });
+
+  it('từ chối khi thú cưng nặng vượt quá tải trọng của chuồng', () => {
+    const res = cageService.canCageAccommodatePet('S', 8.5, false, false);
+    expect(res.allowed).toBe(false);
+    expect(res.reason).toMatch(/Chuồng cỡ S/);
+  });
+
+  it('từ chối khi cờ cách ly không khớp (thú cần cách ly phải vào chuồng isIsolated = true)', () => {
+    const res1 = cageService.canCageAccommodatePet('M', 10, false, true);
+    expect(res1.allowed).toBe(false);
+    expect(res1.reason).toMatch(/chuồng cách ly/);
+
+    const res2 = cageService.canCageAccommodatePet('M', 10, true, false);
+    expect(res2.allowed).toBe(false);
+  });
+});

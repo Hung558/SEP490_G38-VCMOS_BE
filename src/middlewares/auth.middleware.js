@@ -1,7 +1,10 @@
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
+const User = require('../models/User');
 
 // Yêu cầu header: Authorization: Bearer <token>  →  gán req.user = { id, role }
-const protect = (req, res, next) => {
+// Kiểm tra trạng thái tài khoản trong DB để chặn truy cập ngay lập tức khi Admin khóa tài khoản (UC-62)
+const protect = async (req, res, next) => {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Bearer ')) {
     return res.status(401).json({ message: 'Chưa đăng nhập' });
@@ -11,6 +14,32 @@ const protect = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (
+      mongoose.connection.readyState === 1 &&
+      mongoose.isValidObjectId(decoded.id) &&
+      typeof User.findById === 'function'
+    ) {
+      const findQuery = User.findById(decoded.id);
+      const user =
+        findQuery && typeof findQuery.select === 'function'
+          ? await findQuery.select('status role').lean()
+          : null;
+
+      if (user) {
+        if (user.status !== 'Active') {
+          return res.status(403).json({
+            message:
+              user.status === 'Locked'
+                ? 'Tài khoản đã bị khoá, vui lòng liên hệ quản trị viên'
+                : 'Tài khoản đã ngừng hoạt động',
+          });
+        }
+        req.user = { id: decoded.id, role: user.role || decoded.role };
+        return next();
+      }
+    }
+
     req.user = { id: decoded.id, role: decoded.role };
     next();
   } catch {

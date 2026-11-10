@@ -1,5 +1,4 @@
 const appointmentService = require('../services/appointmentOrder.service');
-const AppointmentServiceModel = require('../models/AppointmentService');
 const {
   validateCreateOnlineAppointment,
   validateListOnlineAppointments,
@@ -8,8 +7,9 @@ const {
 } = require('../validators/appointmentOrder.validator');
 
 const handleError = (res, err) => {
-  if (err.status) {
-    return res.status(err.status).json({ message: err.message });
+  const statusCode = err.status || err.statusCode;
+  if (statusCode) {
+    return res.status(statusCode).json({ message: err.message });
   }
   console.error(err);
   return res.status(500).json({ message: 'Lỗi hệ thống' });
@@ -70,15 +70,17 @@ const checkInBooking = async (req, res) => {
   const { errors, value: id } = validateAppointmentId(req.params);
   if (errors.length) return sendValidationError(res, errors);
 
-  try {
-    const appointment = await appointmentService.checkInAppointment(id);
+  const cageId = req.body?.cageId;
+  if (cageId !== undefined && cageId !== null && cageId !== '' && !/^[0-9a-fA-F]{24}$/.test(String(cageId))) {
+    return sendValidationError(res, [{ field: 'cageId', message: 'cageId không hợp lệ' }]);
+  }
 
-    // Khi khách đến Check-in, nếu các dịch vụ bên trong đã được Lễ tân phân công Bác sĩ từ trước
-    // thì tự động chuyển trạng thái dịch vụ từ 'Booked' sang 'Waiting' để vào hàng đợi của Bác sĩ
-    await AppointmentServiceModel.updateMany(
-      { orderId: id, status: 'Booked', assignedStaffId: { $ne: null } },
-      { $set: { status: 'Waiting', enqueueAt: appointment.checkedInAt || new Date() } }
-    );
+  try {
+    const appointment = await appointmentService.checkInAppointment(id, {
+      cageId: cageId || undefined,
+      staffId: req.user?.id,
+      requiresIsolation: req.body?.requiresIsolation,
+    });
 
     return res.json({ message: 'Check-in thành công', data: appointment });
   } catch (err) {

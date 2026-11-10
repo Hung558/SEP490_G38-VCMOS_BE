@@ -4,6 +4,7 @@ const AppointmentOrder = require('../models/AppointmentOrder');
 const Pet = require('../models/Pet');
 const User = require('../models/User');
 const AppointmentService = require('../models/AppointmentService');
+const { createCageAssignment } = require('./cageAssignment.service');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
@@ -265,15 +266,49 @@ const listAllAppointments = async ({
 /**
  * Only a 'Booked' appointment can be checked in. The status check and the update
  * happen in one atomic operation, so two concurrent check-ins can't both succeed.
+ * Also transitions assigned services from 'Booked' to 'Waiting' and optionally assigns a holding cage (UC-22, BR-09, BR-11).
  */
-const checkInAppointment = async (id) => {
+const checkInAppointment = async (id, options = {}) => {
   const appointment = await AppointmentOrder.findOneAndUpdate(
     { _id: id, derivedStatus: 'Booked' },
     { $set: { derivedStatus: 'CheckedIn', checkedInAt: new Date() } },
     { new: true }
   ).lean();
 
-  if (appointment) return appointment;
+  if (appointment) {
+    // 1. Khi khách đến Check-in, tự động chuyển các dịch vụ đã phân công nhân viên từ Booked -> Waiting
+    if (typeof AppointmentService.updateMany === 'function') {
+      await AppointmentService.updateMany(
+        { orderId: id, status: 'Booked', assignedStaffId: { $ne: null } },
+        { $set: { status: 'Waiting', enqueueAt: appointment.checkedInAt || new Date() } }
+      );
+    }
+
+    // 2. Nếu Lễ tân chọn chuồng ngay khi Check-in (UC-22 & BR-09), kiểm tra cân nặng thú cưng (BR-11) và gán chuồng
+    if (options && options.cageId && options.staffId) {
+      let petWeight;
+      if (appointment.petId && typeof Pet.findById === 'function') {
+        const petQuery = Pet.findById(appointment.petId);
+        const petDoc =
+          petQuery && typeof petQuery.select === 'function'
+            ? await petQuery.select('weight').lean()
+            : await petQuery;
+        petWeight = petDoc?.weight;
+      }
+
+      const cageAssignment = await createCageAssignment({
+        cageId: options.cageId,
+        orderId: String(id),
+        assignedById: String(options.staffId),
+        petWeight,
+        requiresIsolation: Boolean(options.requiresIsolation),
+      });
+
+      return { ...appointment, cageAssignment };
+    }
+
+    return appointment;
+  }
 
   // Nothing updated: either it doesn't exist, or it isn't in 'Booked' status
   const existing = await AppointmentOrder.findById(id).select('derivedStatus').lean();
