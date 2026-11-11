@@ -543,6 +543,7 @@
   {
     "petId": "<id_thú_cưng_của_bạn>",
     "date": "2026-11-15",
+    "slotStart": "09:00",
     "note": "Bé hơi nhát, nhờ bác sĩ khám nhẹ nhàng",
     "services": [
       {
@@ -553,6 +554,8 @@
   ```
 - **Kết quả mong đợi**:
   - `201 Created`: Tạo đơn hẹn mã `APT-XXXXXX` (`derivedStatus: "Booked"`, `isOnline: true`), tạo danh sách dịch vụ đi kèm (`sequenceNo: 1, 2...`) và gửi email thông báo cho các Lễ tân đang `Active`.
+    - Nếu có gửi `slotStart` (ví dụ `"09:00"`, nằm trong giờ làm việc `08:00` – `18:00`): BE tự động cộng nối tiếp thời lượng `defaultDuration` của từng dịch vụ (mặc định 30 phút nếu trống) để tính `scheduledStart`, `scheduledEnd` cho từng dịch vụ và `slotEnd` cho đơn tổng.
+  - `400 Bad Request`: `slotStart` sai định dạng `HH:mm`, nằm ngoài khung giờ `08:00` – `18:00`, ở trong quá khứ (nếu đặt ngày hôm nay), hoặc tổng thời lượng dịch vụ vượt quá giờ đóng cửa `18:00`.
   - `409 Conflict`: Thú cưng đã có lịch hẹn trong ngày đã chọn.
 
 *(Lưu ý: Nếu muốn tách rời 2 bước thì gọi `POST /api/appointment-orders/online` tạo đơn trước, sau đó gọi `POST /api/appointment-services/online` để thêm từng dịch vụ).*

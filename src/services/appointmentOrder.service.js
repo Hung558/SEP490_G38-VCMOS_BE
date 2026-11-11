@@ -137,7 +137,7 @@ const notifyReceptionistsOfNewAppointment = async (appointment, pet) => {
  * Create an online appointment for the logged-in owner.
  * ownerId comes from the token (never from the request body).
  */
-const createOnlineAppointment = async (ownerId, { petId, date, note }) => {
+const createOnlineAppointment = async (ownerId, { petId, date, note, slotStart, slotEnd }) => {
   // 1. The pet must exist and belong to the current user
   const pet = await Pet.findOne({ _id: petId, ownerId }).select('_id name').lean();
   if (!pet) {
@@ -157,7 +157,7 @@ const createOnlineAppointment = async (ownerId, { petId, date, note }) => {
   // 3. Create with a random code; retry on the (rare) unique-code collision
   for (let attempt = 0; attempt < MAX_CODE_RETRIES; attempt++) {
     try {
-      const appointment = await AppointmentOrder.create({
+      const doc = {
         code: generateAppointmentCode(),
         petId,
         ownerId,
@@ -166,7 +166,11 @@ const createOnlineAppointment = async (ownerId, { petId, date, note }) => {
         isOnline: true,
         checkedInAt: null,
         // derivedStatus falls back to the schema default: 'Booked'
-      });
+      };
+      if (slotStart !== undefined) doc.slotStart = slotStart;
+      if (slotEnd !== undefined) doc.slotEnd = slotEnd;
+
+      const appointment = await AppointmentOrder.create(doc);
       notifyReceptionistsOfNewAppointment(appointment, pet);
       return appointment;
     } catch (err) {

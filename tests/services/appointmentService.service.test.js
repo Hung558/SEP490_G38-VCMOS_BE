@@ -12,6 +12,9 @@ jest.mock('../../src/models/AppointmentOrder', () => ({
   findById: jest.fn(),
   findByIdAndUpdate: jest.fn(),
 }));
+jest.mock('../../src/models/Service', () => ({
+  find: jest.fn(),
+}));
 // Không nạp appointmentOrder.service thật (kéo theo nodemailer, Pet, User...)
 jest.mock('../../src/services/appointmentOrder.service', () => ({
   createOnlineAppointment: jest.fn(),
@@ -19,6 +22,7 @@ jest.mock('../../src/services/appointmentOrder.service', () => ({
 
 const AppointmentService = require('../../src/models/AppointmentService');
 const AppointmentOrder = require('../../src/models/AppointmentOrder');
+const Service = require('../../src/models/Service');
 const { createOnlineAppointment } = require('../../src/services/appointmentOrder.service');
 const {
   createOnlineAppointmentService,
@@ -359,6 +363,80 @@ describe('createOnlineBooking', () => {
 
       expect(AppointmentService.create).toHaveBeenCalledTimes(1);
       expect(result.data.services).toHaveLength(1);
+    });
+
+    it('tự động tính scheduledStart, scheduledEnd nối tiếp và slotEnd khi truyền slotStart', async () => {
+      mockLastSequences(null, { sequenceNo: 1 });
+      Service.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { _id: 'service-1', defaultDuration: 30 },
+            { _id: 'service-2', defaultDuration: 60 },
+          ]),
+        }),
+      });
+
+      await createOnlineBooking({
+        ...bookingPayload,
+        slotStart: '09:00',
+      });
+
+      expect(createOnlineAppointment).toHaveBeenCalledWith('owner-1', {
+        petId: 'pet-1',
+        date: '2026-11-10',
+        note: 'Ghi chú',
+        slotStart: '09:00',
+        slotEnd: '10:30',
+      });
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(1, {
+        orderId: 'order-1',
+        serviceId: 'service-1',
+        sequenceNo: 1,
+        scheduledStart: '09:00',
+        scheduledEnd: '09:30',
+      });
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(2, {
+        orderId: 'order-1',
+        serviceId: 'service-2',
+        sequenceNo: 2,
+        scheduledStart: '09:30',
+        scheduledEnd: '10:30',
+      });
+    });
+
+    it('ném lỗi 400 nếu slotStart nằm ngoài giờ làm việc 08:00 - 18:00', async () => {
+      await expect(
+        createOnlineBooking({
+          ...bookingPayload,
+          slotStart: '07:30',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: 'Giờ hẹn phải nằm trong khung giờ làm việc (08:00 - 18:00)',
+      });
+      expect(createOnlineAppointment).not.toHaveBeenCalled();
+    });
+
+    it('ném lỗi 400 nếu tổng thời lượng dịch vụ vượt quá giờ đóng cửa 18:00', async () => {
+      Service.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { _id: 'service-1', defaultDuration: 30 },
+            { _id: 'service-2', defaultDuration: 60 },
+          ]),
+        }),
+      });
+
+      await expect(
+        createOnlineBooking({
+          ...bookingPayload,
+          slotStart: '17:00',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: 'Tổng thời lượng dịch vụ vượt quá giờ đóng cửa phòng khám (18:00)',
+      });
+      expect(createOnlineAppointment).not.toHaveBeenCalled();
     });
   });
 
