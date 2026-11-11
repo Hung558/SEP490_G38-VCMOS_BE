@@ -168,8 +168,9 @@ Sau khi biết thú cưng đang ở chuồng nào, Bác sĩ có thể bấm **"B
      ```
    - Hệ thống tự động cập nhật cân nặng mới (`9.2 kg`) vào hồ sơ thú cưng (`Pet.weight`) và kiểm tra thuốc kê đơn phải đang Còn hàng (`Active` - `BR-16`).
 4. **Hoàn tất bệnh án SOAP & Kết thúc ca khám (`POST /api/medical-records/service/<SERVICE_ITEM_ID>/complete`)**:
+   - Trước khi bấm hoàn tất, Bác sĩ có thể gọi `GET /api/cages?status=Available` bằng `<TOKEN_VET>` để lấy danh sách chuồng trống hiển thị vào dropdown chọn chuồng chờ đón (`waitingCageId`).
    - Header: `Authorization: Bearer <TOKEN_VET>`
    - Body (`JSON`): `{ "waitingCageId": "<id_chuồng_chờ_đón_nếu_cần>" }`
-   - Hệ thống kiểm tra đủ 4 trường **S - O - A - P** (`BR-13`), chặn nếu còn Sub-task cận lâm sàng chưa xong (`MSG26`), khóa bệnh án sang **`Finalized`** (`BR-14`), chuyển dịch vụ sang **`Done`**, và tự động chuyển đơn hẹn sang **`WaitOwner`** (Chờ chủ đón) nếu tất cả dịch vụ trong đơn đã hoàn tất (`BR-09`).
+   - Hệ thống kiểm tra đủ 4 trường **S - O - A - P** (`BR-13`), chặn nếu còn Sub-task cận lâm sàng chưa xong (`MSG26`), giữ bệnh án ở trạng thái **`Draft`** chờ thanh toán hóa đơn mới khóa `Finalized` (`BR-14`), chuyển dịch vụ sang **`Done`**, kiểm tra tải trọng chuồng chờ (`BR-11`), và tự động chuyển đơn hẹn sang **`WaitOwner`** (Chờ chủ đón) nếu tất cả dịch vụ trong đơn đã hoàn tất (`BR-09`).
 
 

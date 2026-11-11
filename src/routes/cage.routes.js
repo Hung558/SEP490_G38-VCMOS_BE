@@ -7,8 +7,17 @@ const router = express.Router();
 // All cage routes require a valid token
 router.use(protect);
 
-router.get('/', authorize('Admin', 'Receptionist'), cageController.getCages);
-router.get('/:id', authorize('Admin', 'Receptionist'), cageController.getCageById);
+// Admin, Receptionist, Veterinarian, Groomer đều được xem danh sách và chi tiết chuồng (BR-10, UC-27)
+router.get(
+  '/',
+  authorize('Admin', 'Receptionist', 'Veterinarian', 'Groomer'),
+  cageController.getCages
+);
+router.get(
+  '/:id',
+  authorize('Admin', 'Receptionist', 'Veterinarian', 'Groomer'),
+  cageController.getCageById
+);
 
 router.post('/', authorize('Admin'), cageController.createCage);
 router.patch('/:id', authorize('Admin'), cageController.updateCage);

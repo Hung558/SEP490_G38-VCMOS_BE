@@ -9,7 +9,7 @@ Get the details of a single cage assignment.
 | **Method** | `GET` |
 | **URL** | http://localhost:9999/api/cage-assignments/:id |
 | **Auth** | Required: `Authorization: Bearer <token>` |
-| **Allowed roles** | `Receptionist` |
+| **Allowed roles** | `Receptionist`, `Veterinarian`, `Groomer` |
 
 ## Path parameters
 

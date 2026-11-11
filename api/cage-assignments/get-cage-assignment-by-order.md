@@ -9,7 +9,7 @@ Get the currently open cage assignment (`releasedAt = null`) of an appointment o
 | **Method** | `GET` |
 | **URL** | http://localhost:9999/api/cage-assignments/order/:orderId |
 | **Auth** | Required. `Authorization: Bearer <token>` |
-| **Roles** | `Veterinarian`, `Groomer` |
+| **Roles** | `Receptionist`, `Veterinarian`, `Groomer` |
 
 ## Request headers
 

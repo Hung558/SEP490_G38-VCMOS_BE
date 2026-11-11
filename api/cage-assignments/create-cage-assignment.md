@@ -9,7 +9,7 @@ Assign an available cage to an appointment order. On success the cage status is 
 | **Method** | `POST` |
 | **URL** | http://localhost:9999/api/cage-assignments |
 | **Auth** | Required: `Authorization: Bearer <token>` |
-| **Allowed roles** | `Receptionist` |
+| **Allowed roles** | `Receptionist`, `Veterinarian`, `Groomer` |
 | **Content-Type** | `application/json` |
 
 ## Request body

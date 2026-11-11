@@ -9,7 +9,7 @@ Release a pet from its cage. The assignment is closed (`releasedAt` is set to th
 | **Method** | `PATCH` |
 | **URL** | http://localhost:9999/api/cage-assignments/:id/release |
 | **Auth** | Required. `Authorization: Bearer <token>` |
-| **Roles** | `Veterinarian`, `Groomer` |
+| **Roles** | `Receptionist`, `Veterinarian`, `Groomer` |
 
 ## Path parameters
 

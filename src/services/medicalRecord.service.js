@@ -334,9 +334,24 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
   }
 
   // Cập nhật cân nặng mới nhất của thú cưng vào bảng Pet
+  let latestPetWeight = payload.weight;
   if (payload.weight !== undefined) {
     await Pet.findByIdAndUpdate(order.petId, {
       $set: { weight: payload.weight },
+    });
+  } else if (payload.waitingCageId) {
+    const petDoc = await Pet.findById(order.petId).select('weight').lean();
+    latestPetWeight = petDoc?.weight;
+  }
+
+  // BR-10 & BR-11: Nếu bác sĩ chọn chuồng chờ đón (waitingCageId) thì kiểm tra tải trọng và gán chuồng trước khi chốt trạng thái
+  let waitingCageAssignment = null;
+  if (payload.waitingCageId) {
+    waitingCageAssignment = await createCageAssignment({
+      cageId: payload.waitingCageId,
+      orderId: String(order._id),
+      assignedById: String(staffId),
+      petWeight: latestPetWeight,
     });
   }
 
@@ -387,16 +402,6 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
     { $set: { derivedStatus: nextOrderStatus } },
     { returnDocument: 'after' }
   ).lean();
-
-  // BR-10: Nếu bác sĩ chọn chuồng chờ đón (waitingCageId) thì gán chuồng luôn
-  let waitingCageAssignment = null;
-  if (payload.waitingCageId) {
-    waitingCageAssignment = await createCageAssignment({
-      cageId: payload.waitingCageId,
-      orderId: String(order._id),
-      assignedById: String(staffId),
-    });
-  }
 
   return {
     medicalRecord: completedRecord,

@@ -8,7 +8,7 @@ Get a single cage by its ID.
 |---|---|
 | **Method** | `GET` |
 | **URL** | http://localhost:9999/api/cages/:id |
-| **Auth** | Required (Bearer token). Roles: `Admin`, `Receptionist` |
+| **Auth** | Required (Bearer token). Roles: `Admin`, `Receptionist`, `Veterinarian`, `Groomer` |
 
 ## Request headers
 
