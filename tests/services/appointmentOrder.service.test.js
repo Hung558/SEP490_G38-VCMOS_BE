@@ -206,6 +206,30 @@ describe('createOnlineAppointment', () => {
       });
     });
 
+    it('includes slotStart and slotEnd when provided', async () => {
+      const created = { _id: 'apt-1', code: 'APT-XXXXXX', slotStart: '09:00', slotEnd: '09:45' };
+      AppointmentOrder.create.mockResolvedValue(created);
+
+      const result = await service.createOnlineAppointment(OWNER_ID, {
+        ...input,
+        slotStart: '09:00',
+        slotEnd: '09:45',
+      });
+
+      expect(result).toBe(created);
+      expect(AppointmentOrder.create).toHaveBeenCalledWith({
+        code: expect.any(String),
+        petId: PET_ID,
+        ownerId: OWNER_ID,
+        date: input.date,
+        note: input.note,
+        isOnline: true,
+        checkedInAt: null,
+        slotStart: '09:00',
+        slotEnd: '09:45',
+      });
+    });
+
     it('does not set derivedStatus explicitly (relies on schema default)', async () => {
       AppointmentOrder.create.mockResolvedValue({});
 

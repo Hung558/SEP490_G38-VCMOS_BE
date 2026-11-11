@@ -20,13 +20,34 @@ const DEFAULT_ONLY_FIELDS = [
 ];
 
 // Các trường của lịch hẹn không được truyền vào khi đặt lịch (dùng giá trị mặc định / sinh tự động)
-const BOOKING_ORDER_DEFAULT_ONLY_FIELDS = ['code', 'isOnline', 'derivedStatus', 'checkedInAt'];
+const BOOKING_ORDER_DEFAULT_ONLY_FIELDS = ['code', 'isOnline', 'derivedStatus', 'checkedInAt', 'slotEnd'];
 
-// Mỗi dịch vụ trong lịch đặt: ngoài các trường mặc định, orderId cũng không được truyền (lịch hẹn chưa tồn tại)
-const BOOKING_SERVICE_DEFAULT_ONLY_FIELDS = [...DEFAULT_ONLY_FIELDS, 'orderId'];
+// Mỗi dịch vụ trong lịch đặt: ngoài các trường mặc định, orderId và giờ dự kiến cũng không được truyền (BE tự tính từ slotStart + defaultDuration)
+const BOOKING_SERVICE_DEFAULT_ONLY_FIELDS = [...DEFAULT_ONLY_FIELDS, 'orderId', 'scheduledStart', 'scheduledEnd'];
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const CLINIC_OPEN_TIME = '08:00';
+const CLINIC_CLOSE_TIME = '18:00';
+const CLINIC_CLOSE_MINUTES = 18 * 60;
+const DEFAULT_SERVICE_DURATION = 30;
 const CANCEL_REASON_MAX_LENGTH = 200;
+
+const todayVN = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+
+const currentTimeVN = () =>
+  new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
+
+const parseTimeToMinutes = (timeStr) => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return hours * 60 + minutes;
+};
 
 const createError = (message, statusCode = 400) => {
   const err = new Error(message);
@@ -111,7 +132,7 @@ async function validateCreateOnlineAppointmentService(payload) {
  */
 async function validateCreateOnlineBooking(payload) {
   const data = payload || {};
-  const { petId, date, note, services } = data;
+  const { petId, date, note, slotStart, services } = data;
 
   // 1. Các trường của lịch hẹn không được phép truyền vào
   const forbidden = BOOKING_ORDER_DEFAULT_ONLY_FIELDS.filter((field) => data[field] !== undefined);
@@ -130,6 +151,23 @@ async function validateCreateOnlineBooking(payload) {
 
   if (note !== undefined && typeof note !== 'string') {
     throw createError('note phải là chuỗi');
+  }
+
+  let cleanSlotStart;
+  if (slotStart !== undefined && slotStart !== null && slotStart !== '') {
+    if (typeof slotStart !== 'string' || !TIME_REGEX.test(slotStart.trim())) {
+      throw createError('slotStart phải có định dạng HH:mm (ví dụ: 09:00)');
+    }
+    cleanSlotStart = slotStart.trim();
+    if (cleanSlotStart < CLINIC_OPEN_TIME || cleanSlotStart >= CLINIC_CLOSE_TIME) {
+      throw createError(`Giờ hẹn phải nằm trong khung giờ làm việc (${CLINIC_OPEN_TIME} - ${CLINIC_CLOSE_TIME})`);
+    }
+    if (date < todayVN()) {
+      throw createError('Ngày hẹn không được ở trong quá khứ');
+    }
+    if (date === todayVN() && cleanSlotStart <= currentTimeVN()) {
+      throw createError('Giờ hẹn không được ở trong quá khứ');
+    }
   }
 
   // 3. Kiểm tra danh sách dịch vụ
@@ -178,14 +216,25 @@ async function validateCreateOnlineBooking(payload) {
 
   // 5. Kiểm tra dịch vụ tồn tại và đang hoạt động (1 truy vấn cho tất cả)
   const serviceIds = [...new Set(services.map((s) => String(s.serviceId)))];
-  const found = await Service.find({ _id: { $in: serviceIds } }).select('status').lean();
+  const found = await Service.find({ _id: { $in: serviceIds } }).select('status defaultDuration').lean();
   const serviceMap = new Map(found.map((s) => [String(s._id), s]));
 
+  let totalDurationMinutes = 0;
   services.forEach((item, i) => {
     const service = serviceMap.get(String(item.serviceId));
     if (!service) throw createError(`services[${i}]: Không tìm thấy dịch vụ`, 404);
     if (service.status !== 'Active') throw createError(`services[${i}]: Dịch vụ hiện không hoạt động`);
+
+    const duration = Number(service.defaultDuration) > 0 ? Number(service.defaultDuration) : DEFAULT_SERVICE_DURATION;
+    totalDurationMinutes += duration;
   });
+
+  if (cleanSlotStart !== undefined) {
+    const endMinutes = parseTimeToMinutes(cleanSlotStart) + totalDurationMinutes;
+    if (endMinutes > CLINIC_CLOSE_MINUTES) {
+      throw createError(`Tổng thời lượng dịch vụ vượt quá giờ đóng cửa phòng khám (${CLINIC_CLOSE_TIME})`);
+    }
+  }
 
   return data;
 }

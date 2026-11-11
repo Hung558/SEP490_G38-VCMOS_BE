@@ -9,12 +9,24 @@ const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 const APPOINTMENT_CODE_REGEX = /^APT-[A-Z0-9]{6}$/;
+const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const CLINIC_OPEN_TIME = '08:00';
+const CLINIC_CLOSE_TIME = '18:00';
 
 const isMongoId = (v) => typeof v === 'string' && /^[0-9a-fA-F]{24}$/.test(v);
 
 // Today as YYYY-MM-DD in Vietnam time (the server may run in UTC)
 const todayVN = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+
+// Current time as HH:mm in Vietnam time
+const currentTimeVN = () =>
+  new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
 
 // Rejects things like 2026-02-31 that pass the regex but are not real dates
 const isRealDate = (v) => {
@@ -87,13 +99,14 @@ const checkOptionalMongoId = (value, field, errors) => {
 
 const validateCreateOnlineAppointment = (body = {}) => {
   const errors = [];
-  const { petId, date, note } = body;
+  const { petId, date, note, slotStart, slotEnd } = body;
 
   if (!isMongoId(petId)) {
     errors.push({ field: 'petId', message: 'petId không hợp lệ' });
   }
 
-  if (!isRealDate(date)) {
+  const dateOk = isRealDate(date);
+  if (!dateOk) {
     errors.push({ field: 'date', message: 'Ngày phải đúng định dạng YYYY-MM-DD và hợp lệ' });
   } else if (date < todayVN()) {
     errors.push({ field: 'date', message: 'Ngày hẹn không được ở trong quá khứ' });
@@ -111,7 +124,45 @@ const validateCreateOnlineAppointment = (body = {}) => {
     }
   }
 
-  return { errors, value: { petId, date, note: cleanNote } };
+  let cleanSlotStart;
+  if (!isBlank(slotStart)) {
+    if (typeof slotStart !== 'string' || !TIME_REGEX.test(slotStart.trim())) {
+      errors.push({ field: 'slotStart', message: 'slotStart phải có định dạng HH:mm (ví dụ: 09:00)' });
+    } else {
+      cleanSlotStart = slotStart.trim();
+      if (cleanSlotStart < CLINIC_OPEN_TIME || cleanSlotStart >= CLINIC_CLOSE_TIME) {
+        errors.push({
+          field: 'slotStart',
+          message: `Giờ hẹn phải nằm trong khung giờ làm việc (${CLINIC_OPEN_TIME} - ${CLINIC_CLOSE_TIME})`,
+        });
+      } else if (dateOk && date === todayVN() && cleanSlotStart <= currentTimeVN()) {
+        errors.push({ field: 'slotStart', message: 'Giờ hẹn không được ở trong quá khứ' });
+      }
+    }
+  }
+
+  let cleanSlotEnd;
+  if (!isBlank(slotEnd)) {
+    if (typeof slotEnd !== 'string' || !TIME_REGEX.test(slotEnd.trim())) {
+      errors.push({ field: 'slotEnd', message: 'slotEnd phải có định dạng HH:mm (ví dụ: 09:30)' });
+    } else {
+      cleanSlotEnd = slotEnd.trim();
+      if (cleanSlotEnd > CLINIC_CLOSE_TIME) {
+        errors.push({
+          field: 'slotEnd',
+          message: `Giờ kết thúc dự kiến vượt quá giờ đóng cửa phòng khám (${CLINIC_CLOSE_TIME})`,
+        });
+      } else if (cleanSlotStart && cleanSlotEnd <= cleanSlotStart) {
+        errors.push({ field: 'slotEnd', message: 'slotEnd phải lớn hơn slotStart' });
+      }
+    }
+  }
+
+  const value = { petId, date, note: cleanNote };
+  if (cleanSlotStart !== undefined) value.slotStart = cleanSlotStart;
+  if (cleanSlotEnd !== undefined) value.slotEnd = cleanSlotEnd;
+
+  return { errors, value };
 };
 
 const validateListOnlineAppointments = (query = {}) => {

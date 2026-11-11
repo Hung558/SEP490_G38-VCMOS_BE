@@ -1,11 +1,28 @@
 const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
+const Service = require('../models/Service');
 const { createOnlineAppointment } = require('./appointmentOrder.service');
 
 const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
+const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const CLINIC_OPEN_TIME = '08:00';
+const CLINIC_CLOSE_TIME = '18:00';
+const CLINIC_CLOSE_MINUTES = 18 * 60;
+const DEFAULT_SERVICE_DURATION = 30;
 
 const todayVN = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+
+const parseTimeToMinutes = (timeStr) => {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return hours * 60 + minutes;
+};
+
+const formatMinutesToTime = (totalMinutes) => {
+  const hours = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
+  const minutes = String(totalMinutes % 60).padStart(2, '0');
+  return `${hours}:${minutes}`;
+};
 
 const createError = (message, statusCode = 400) => {
   const err = new Error(message);
@@ -29,7 +46,15 @@ const createError = (message, statusCode = 400) => {
  * @returns {Promise<{ message: string, data: AppointmentService }>}
  * @throws {Error} 403 nếu lịch hẹn không thuộc về `ownerId`
  */
-async function createOnlineAppointmentService({ ownerId, orderId, serviceId, sequenceNo, isEmergency }) {
+async function createOnlineAppointmentService({
+  ownerId,
+  orderId,
+  serviceId,
+  sequenceNo,
+  isEmergency,
+  scheduledStart,
+  scheduledEnd,
+}) {
   // PetOwner chỉ được tạo dịch vụ cho lịch hẹn của chính mình
   const isOwner = await AppointmentOrder.exists({ _id: orderId, ownerId });
   if (!isOwner) {
@@ -47,6 +72,8 @@ async function createOnlineAppointmentService({ ownerId, orderId, serviceId, seq
 
   const doc = { orderId, serviceId, sequenceNo: seq };
   if (typeof isEmergency === 'boolean') doc.isEmergency = isEmergency;
+  if (typeof scheduledStart === 'string') doc.scheduledStart = scheduledStart;
+  if (typeof scheduledEnd === 'string') doc.scheduledEnd = scheduledEnd;
 
   try {
     const data = await AppointmentService.create(doc);
@@ -70,30 +97,91 @@ async function createOnlineAppointmentService({ ownerId, orderId, serviceId, seq
  * @param {string} payload.petId
  * @param {string} payload.date - YYYY-MM-DD
  * @param {string} [payload.note]
+ * @param {string} [payload.slotStart] - HH:mm (tùy chọn; nếu có, BE tự tính scheduledStart/scheduledEnd và slotEnd)
  * @param {Array<{ serviceId: string, sequenceNo?: number, isEmergency?: boolean }>} payload.services
  * @returns {Promise<{ message: string, data: { appointment: AppointmentOrder, services: AppointmentService[] } }>}
  * @throws {Error} 400 nếu không có dịch vụ nào; lỗi từ createOnlineAppointment / createOnlineAppointmentService
  */
-async function createOnlineBooking({ ownerId, petId, date, note, services }) {
+async function createOnlineBooking({ ownerId, petId, date, note, slotStart, services }) {
   if (!Array.isArray(services) || services.length === 0) {
     throw createError('Lịch hẹn phải có ít nhất một dịch vụ', 400);
   }
 
+  // Nếu có truyền slotStart, tính nối tiếp scheduledStart / scheduledEnd cho từng dịch vụ và slotEnd cho đơn tổng
+  let cleanSlotStart;
+  let computedSlotEnd;
+  let serviceTimeWindows = [];
+
+  if (slotStart !== undefined && slotStart !== null && slotStart !== '') {
+    if (typeof slotStart !== 'string' || !TIME_REGEX.test(slotStart.trim())) {
+      throw createError('slotStart phải có định dạng HH:mm (ví dụ: 09:00)', 400);
+    }
+    cleanSlotStart = slotStart.trim();
+    if (cleanSlotStart < CLINIC_OPEN_TIME || cleanSlotStart >= CLINIC_CLOSE_TIME) {
+      throw createError(
+        `Giờ hẹn phải nằm trong khung giờ làm việc (${CLINIC_OPEN_TIME} - ${CLINIC_CLOSE_TIME})`,
+        400
+      );
+    }
+
+    const serviceIds = [...new Set(services.map((s) => String(s.serviceId)))];
+    let durationMap = new Map();
+    if (Service && typeof Service.find === 'function') {
+      const query = Service.find({ _id: { $in: serviceIds } });
+      const foundServices =
+        query && typeof query.select === 'function'
+          ? await query.select('defaultDuration').lean()
+          : await query;
+      if (Array.isArray(foundServices)) {
+        durationMap = new Map(foundServices.map((s) => [String(s._id), s.defaultDuration]));
+      }
+    }
+
+    let currentMinutes = parseTimeToMinutes(cleanSlotStart);
+    for (const item of services) {
+      const rawDuration = durationMap.get(String(item.serviceId));
+      const duration = Number(rawDuration) > 0 ? Number(rawDuration) : DEFAULT_SERVICE_DURATION;
+      const startStr = formatMinutesToTime(currentMinutes);
+      currentMinutes += duration;
+      const endStr = formatMinutesToTime(currentMinutes);
+      serviceTimeWindows.push({ scheduledStart: startStr, scheduledEnd: endStr });
+    }
+
+    if (currentMinutes > CLINIC_CLOSE_MINUTES) {
+      throw createError(
+        `Tổng thời lượng dịch vụ vượt quá giờ đóng cửa phòng khám (${CLINIC_CLOSE_TIME})`,
+        400
+      );
+    }
+    computedSlotEnd = formatMinutesToTime(currentMinutes);
+  }
+
   // 1. Tạo lịch hẹn (kiểm tra thú cưng, chống đặt trùng, sinh mã, gửi email cho lễ tân)
-  const appointment = await createOnlineAppointment(ownerId, { petId, date, note });
+  const orderInput = { petId, date, note };
+  if (cleanSlotStart !== undefined) {
+    orderInput.slotStart = cleanSlotStart;
+    orderInput.slotEnd = computedSlotEnd;
+  }
+  const appointment = await createOnlineAppointment(ownerId, orderInput);
 
   // 2. Tạo từng dịch vụ TUẦN TỰ: nếu chạy song song, các lần tự tăng sequenceNo
   //    sẽ đọc cùng một giá trị "last" và đụng unique index (orderId, sequenceNo)
   const createdServices = [];
   try {
-    for (const { serviceId, sequenceNo, isEmergency } of services) {
-      const { data } = await createOnlineAppointmentService({
+    for (let i = 0; i < services.length; i++) {
+      const { serviceId, sequenceNo, isEmergency } = services[i];
+      const serviceInput = {
         ownerId,
         orderId: appointment._id,
         serviceId,
         sequenceNo,
         isEmergency,
-      });
+      };
+      if (serviceTimeWindows[i]) {
+        serviceInput.scheduledStart = serviceTimeWindows[i].scheduledStart;
+        serviceInput.scheduledEnd = serviceTimeWindows[i].scheduledEnd;
+      }
+      const { data } = await createOnlineAppointmentService(serviceInput);
       createdServices.push(data);
     }
   } catch (err) {
