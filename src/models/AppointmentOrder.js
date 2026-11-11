@@ -16,6 +16,9 @@ const appointmentOrderSchema = new mongoose.Schema(
       default: 'Booked',
     },
     checkedInAt: { type: Date, default: null },
+    cancelReason: { type: String, default: null },
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true }
 );

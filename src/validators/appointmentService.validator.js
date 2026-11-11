@@ -26,6 +26,7 @@ const BOOKING_ORDER_DEFAULT_ONLY_FIELDS = ['code', 'isOnline', 'derivedStatus', 
 const BOOKING_SERVICE_DEFAULT_ONLY_FIELDS = [...DEFAULT_ONLY_FIELDS, 'orderId'];
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const CANCEL_REASON_MAX_LENGTH = 200;
 
 const createError = (message, statusCode = 400) => {
   const err = new Error(message);
@@ -303,10 +304,43 @@ async function validateGetServicesByAssignedStaffId(payload) {
   return { assignedStaffId, status };
 }
 
+/**
+ * Kiểm tra dữ liệu khi PetOwner hoặc Lễ tân hủy 1 dịch vụ lẻ trong lịch hẹn (UC-18, BR-07).
+ */
+async function validateCancelAppointmentService(appointmentServiceId, payload) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+
+  const data = payload || {};
+  const rawReason = data.reason !== undefined ? data.reason : data.cancelReason;
+
+  if (rawReason === undefined || rawReason === null || rawReason === '') {
+    throw createError('Vui lòng nhập lý do hủy');
+  }
+  if (typeof rawReason !== 'string') {
+    throw createError('Lý do hủy phải là chuỗi');
+  }
+
+  const cleanReason = rawReason.trim();
+  if (!cleanReason) {
+    throw createError('Vui lòng nhập lý do hủy');
+  }
+  if (cleanReason.length > CANCEL_REASON_MAX_LENGTH) {
+    throw createError(`Lý do hủy tối đa ${CANCEL_REASON_MAX_LENGTH} ký tự`);
+  }
+
+  return {
+    appointmentServiceId,
+    reason: cleanReason,
+  };
+}
+
 module.exports = {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
   validateGetServicesByOrderId,
   validateAssignStaffToService,
-  validateGetServicesByAssignedStaffId
+  validateGetServicesByAssignedStaffId,
+  validateCancelAppointmentService,
 };

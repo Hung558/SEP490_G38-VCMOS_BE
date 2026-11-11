@@ -2,6 +2,11 @@ const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const { createOnlineAppointment } = require('./appointmentOrder.service');
 
+const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
+
+const todayVN = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+
 const createError = (message, statusCode = 400) => {
   const err = new Error(message);
   err.statusCode = statusCode;
@@ -204,10 +209,129 @@ async function getAppointmentServicesByAssignedStaffId({ assignedStaffId, status
   };
 }
 
+/**
+ * UC-18, BR-07, BR-09: Hủy 1 dịch vụ lẻ trong lịch hẹn (do PetOwner hoặc Receptionist thực hiện).
+ * - Nếu tất cả dịch vụ trong đơn đều đã bị hủy -> đơn chuyển sang 'Cancelled'.
+ * - Nếu đơn còn dịch vụ khác chưa hủy -> giữ nguyên trạng thái đơn (hoặc chuyển sang 'WaitOwner'
+ *   nếu đơn đã Check-in và tất cả các dịch vụ còn lại đều đã 'Done').
+ */
+async function cancelAppointmentService({ appointmentServiceId, userId, role, reason }) {
+  // 1. Tìm dịch vụ trong lịch hẹn
+  const currentService = await AppointmentService.findById(appointmentServiceId).lean();
+  if (!currentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+
+  // 2. Tìm đơn lịch hẹn cha
+  const order = await AppointmentOrder.findById(currentService.orderId).lean();
+  if (!order) {
+    throw createError('Không tìm thấy lịch hẹn', 404);
+  }
+
+  // 3. Kiểm tra quyền sở hữu nếu là PetOwner (chống IDOR)
+  if (role === 'PetOwner' && String(order.ownerId) !== String(userId)) {
+    throw createError('Bạn chỉ có thể hủy dịch vụ trong lịch hẹn của chính mình', 403);
+  }
+
+  // 4. Kiểm tra trạng thái và khung giờ cho phép hủy (UC-18, BR-07)
+  if (currentService.status === 'Cancelled') {
+    throw createError('Dịch vụ này đã bị hủy trước đó', 409);
+  }
+
+  if (role === 'PetOwner') {
+    if (order.derivedStatus !== 'Booked' || currentService.status !== 'Booked') {
+      throw createError(
+        'Không thể tự hủy dịch vụ sau khi đã check-in. Vui lòng liên hệ phòng khám để được hỗ trợ',
+        409
+      );
+    }
+
+    const startTimeStr = currentService.scheduledStart || order.slotStart;
+    if (startTimeStr) {
+      const scheduledStartMs = new Date(`${order.date}T${startTimeStr}:00+07:00`).getTime();
+      if (!Number.isNaN(scheduledStartMs) && scheduledStartMs - Date.now() < CANCELLATION_WINDOW_MS) {
+        throw createError(
+          'Không thể tự hủy dịch vụ trong vòng 2 giờ trước giờ hẹn. Vui lòng liên hệ phòng khám để được hỗ trợ',
+          409
+        );
+      }
+    } else if (order.date && order.date < todayVN()) {
+      throw createError(
+        'Không thể tự hủy dịch vụ khi đã qua ngày hẹn. Vui lòng liên hệ phòng khám để được hỗ trợ',
+        409
+      );
+    }
+  } else {
+    // Lễ tân chỉ được hủy dịch vụ chưa bắt đầu (Booked / Waiting) thuộc đơn chưa kết thúc
+    if (['Done', 'Cancelled', 'Overdue'].includes(order.derivedStatus)) {
+      throw createError(
+        `Không thể hủy dịch vụ của lịch hẹn đang ở trạng thái "${order.derivedStatus}"`,
+        409
+      );
+    }
+    if (!['Booked', 'Waiting'].includes(currentService.status)) {
+      throw createError(
+        `Không thể hủy dịch vụ đang ở trạng thái "${currentService.status}"`,
+        409
+      );
+    }
+  }
+
+  // 5. Cập nhật trạng thái dịch vụ sang Cancelled và giải phóng hàng đợi
+  const now = new Date();
+  const updatedService = await AppointmentService.findByIdAndUpdate(
+    appointmentServiceId,
+    {
+      $set: {
+        status: 'Cancelled',
+        cancelReason: reason,
+        cancelledAt: now,
+        cancelledBy: userId,
+        queueNo: null,
+        enqueueAt: null,
+      },
+    },
+    { returnDocument: 'after' }
+  )
+    .populate('serviceId')
+    .populate('preferredStaffId', 'code fullName role status')
+    .populate('assignedStaffId', 'code fullName role status')
+    .lean();
+
+  // 6. Tính toán lại trạng thái đơn lịch hẹn (BR-09, UC-18 Alt Flow 5a)
+  const allServices = await AppointmentService.find({ orderId: order._id })
+    .select('status')
+    .lean();
+
+  if (allServices.length > 0 && allServices.every((item) => item.status === 'Cancelled')) {
+    await AppointmentOrder.findByIdAndUpdate(order._id, {
+      $set: {
+        derivedStatus: 'Cancelled',
+        cancelReason: reason,
+        cancelledAt: now,
+        cancelledBy: userId,
+      },
+    });
+  } else if (['CheckedIn', 'InProgress'].includes(order.derivedStatus)) {
+    const activeServices = allServices.filter((item) => item.status !== 'Cancelled');
+    if (activeServices.length > 0 && activeServices.every((item) => item.status === 'Done')) {
+      await AppointmentOrder.findByIdAndUpdate(order._id, {
+        $set: { derivedStatus: 'WaitOwner' },
+      });
+    }
+  }
+
+  return {
+    message: 'Hủy dịch vụ trong lịch hẹn thành công',
+    data: updatedService,
+  };
+}
+
 module.exports = {
   createOnlineAppointmentService,
   createOnlineBooking,
   getAppointmentServicesByOrderId,
   assignStaffToAppointmentService,
-  getAppointmentServicesByAssignedStaffId
+  getAppointmentServicesByAssignedStaffId,
+  cancelAppointmentService,
 };

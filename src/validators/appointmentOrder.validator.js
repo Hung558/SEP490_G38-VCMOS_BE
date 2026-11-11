@@ -4,6 +4,7 @@
 
 const STATUSES = ['Booked', 'CheckedIn', 'InProgress', 'WaitOwner', 'Done', 'Cancelled', 'Overdue'];
 const NOTE_MAX_LENGTH = 500;
+const CANCEL_REASON_MAX_LENGTH = 200;
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
@@ -166,9 +167,35 @@ const validateAppointmentId = (params = {}) => {
   return { errors, value: params.id };
 };
 
+// UC-18: Bắt buộc nhập lý do hủy (MSG22), tối đa 200 ký tự (MSG03)
+const validateCancelAppointment = (body = {}) => {
+  const errors = [];
+  const rawReason = body.reason !== undefined ? body.reason : body.cancelReason;
+  let cleanReason;
+
+  if (isBlank(rawReason)) {
+    errors.push({ field: 'reason', message: 'Vui lòng nhập lý do hủy' });
+  } else if (typeof rawReason !== 'string') {
+    errors.push({ field: 'reason', message: 'Lý do hủy phải là chuỗi' });
+  } else {
+    cleanReason = rawReason.trim();
+    if (!cleanReason) {
+      errors.push({ field: 'reason', message: 'Vui lòng nhập lý do hủy' });
+    } else if (cleanReason.length > CANCEL_REASON_MAX_LENGTH) {
+      errors.push({
+        field: 'reason',
+        message: `Lý do hủy tối đa ${CANCEL_REASON_MAX_LENGTH} ký tự`,
+      });
+    }
+  }
+
+  return { errors, value: { reason: cleanReason } };
+};
+
 module.exports = {
   validateCreateOnlineAppointment,
   validateListOnlineAppointments,
   validateListAllAppointments,
   validateAppointmentId,
+  validateCancelAppointment,
 };

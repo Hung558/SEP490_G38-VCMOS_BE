@@ -22,4 +22,7 @@ router.get('/', authorize('Admin', 'Receptionist'), controller.listAllBooking);
 // Receptionist routes
 router.patch('/:id/check-in', authorize('Receptionist'), controller.checkInBooking);
 
+// PetOwner / Receptionist cancel appointment order (UC-18, BR-07)
+router.patch('/:id/cancel', authorize('PetOwner', 'Receptionist'), controller.cancelBooking);
+
 module.exports = router;

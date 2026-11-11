@@ -1248,3 +1248,217 @@ describe('checkInAppointment', () => {
     });
   });
 });
+
+// ---------- cancelAppointment ----------
+
+describe('cancelAppointment', () => {
+  const APPOINTMENT_ID = 'apt-1';
+  const FUTURE_DATE = '2099-12-31';
+
+  beforeEach(() => {
+    AppointmentService.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 2 });
+    AppointmentService.exists = jest.fn().mockResolvedValue(null);
+  });
+
+  it('throws 404 when appointment does not exist', async () => {
+    mockFindById(null);
+
+    await expect(
+      service.cancelAppointment('missing', {
+        userId: OWNER_ID,
+        role: 'PetOwner',
+        reason: 'Bận đột xuất',
+      })
+    ).rejects.toMatchObject({
+      status: 404,
+      message: 'Không tìm thấy lịch hẹn',
+    });
+  });
+
+  it('throws 403 when PetOwner tries to cancel another owner appointment (IDOR check)', async () => {
+    mockFindById({
+      _id: APPOINTMENT_ID,
+      ownerId: 'other-owner',
+      date: FUTURE_DATE,
+      derivedStatus: 'Booked',
+    });
+
+    await expect(
+      service.cancelAppointment(APPOINTMENT_ID, {
+        userId: OWNER_ID,
+        role: 'PetOwner',
+        reason: 'Bận đột xuất',
+      })
+    ).rejects.toMatchObject({
+      status: 403,
+      message: 'Bạn chỉ có thể hủy lịch hẹn của chính mình',
+    });
+  });
+
+  it('throws 409 when appointment is already Cancelled', async () => {
+    mockFindById({
+      _id: APPOINTMENT_ID,
+      ownerId: OWNER_ID,
+      date: FUTURE_DATE,
+      derivedStatus: 'Cancelled',
+    });
+
+    await expect(
+      service.cancelAppointment(APPOINTMENT_ID, {
+        userId: OWNER_ID,
+        role: 'PetOwner',
+        reason: 'Bận đột xuất',
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: 'Lịch hẹn này đã bị hủy trước đó',
+    });
+  });
+
+  it('throws 409 when PetOwner tries to self-cancel after Check-in (BR-07)', async () => {
+    mockFindById({
+      _id: APPOINTMENT_ID,
+      ownerId: OWNER_ID,
+      date: FUTURE_DATE,
+      derivedStatus: 'CheckedIn',
+    });
+
+    await expect(
+      service.cancelAppointment(APPOINTMENT_ID, {
+        userId: OWNER_ID,
+        role: 'PetOwner',
+        reason: 'Bận đột xuất',
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message:
+        'Lịch hẹn này không thể tự hủy trực tuyến sau khi đã check-in. Vui lòng liên hệ phòng khám để được hỗ trợ',
+    });
+  });
+
+  it('throws 409 when PetOwner tries to self-cancel within 2 hours of slotStart (BR-07)', async () => {
+    // 30 minutes from now in +07:00
+    const in30Mins = new Date(Date.now() + 30 * 60 * 1000);
+    const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(in30Mins);
+    const timeStr = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(in30Mins);
+
+    mockFindById({
+      _id: APPOINTMENT_ID,
+      ownerId: OWNER_ID,
+      date: dateStr,
+      slotStart: timeStr,
+      derivedStatus: 'Booked',
+    });
+
+    await expect(
+      service.cancelAppointment(APPOINTMENT_ID, {
+        userId: OWNER_ID,
+        role: 'PetOwner',
+        reason: 'Sát giờ bận việc',
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message:
+        'Không thể tự hủy lịch hẹn trong vòng 2 giờ trước giờ hẹn. Vui lòng liên hệ phòng khám để được hỗ trợ',
+    });
+  });
+
+  it('allows PetOwner to cancel a Booked appointment outside the 2-hour window and cancels child services', async () => {
+    mockFindById({
+      _id: APPOINTMENT_ID,
+      ownerId: OWNER_ID,
+      date: FUTURE_DATE,
+      slotStart: '10:00',
+      derivedStatus: 'Booked',
+    });
+    const updatedDoc = {
+      _id: APPOINTMENT_ID,
+      derivedStatus: 'Cancelled',
+      cancelReason: 'Bận đi công tác',
+    };
+    mockFindOneAndUpdate(updatedDoc);
+
+    const result = await service.cancelAppointment(APPOINTMENT_ID, {
+      userId: OWNER_ID,
+      role: 'PetOwner',
+      reason: 'Bận đi công tác',
+    });
+
+    expect(result).toBe(updatedDoc);
+    expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: APPOINTMENT_ID, derivedStatus: 'Booked' },
+      {
+        $set: {
+          derivedStatus: 'Cancelled',
+          cancelReason: 'Bận đi công tác',
+          cancelledAt: expect.any(Date),
+          cancelledBy: OWNER_ID,
+        },
+      },
+      { new: true }
+    );
+    expect(AppointmentService.updateMany).toHaveBeenCalledWith(
+      { orderId: APPOINTMENT_ID, status: { $in: ['Booked', 'Waiting'] } },
+      {
+        $set: {
+          status: 'Cancelled',
+          cancelReason: 'Bận đi công tác',
+          cancelledAt: expect.any(Date),
+          cancelledBy: OWNER_ID,
+          queueNo: null,
+          enqueueAt: null,
+        },
+      }
+    );
+  });
+
+  it('allows Receptionist to cancel a CheckedIn appointment when no service has started', async () => {
+    mockFindById({
+      _id: APPOINTMENT_ID,
+      ownerId: OWNER_ID,
+      date: '2026-01-01',
+      derivedStatus: 'CheckedIn',
+    });
+    AppointmentService.exists.mockResolvedValue(null);
+    const updatedDoc = { _id: APPOINTMENT_ID, derivedStatus: 'Cancelled' };
+    mockFindOneAndUpdate(updatedDoc);
+
+    const result = await service.cancelAppointment(APPOINTMENT_ID, {
+      userId: 'recep-1',
+      role: 'Receptionist',
+      reason: 'Khách yêu cầu hủy tại quầy',
+    });
+
+    expect(result).toBe(updatedDoc);
+    expect(AppointmentService.exists).toHaveBeenCalledWith({
+      orderId: APPOINTMENT_ID,
+      status: { $in: ['InProgress', 'Done'] },
+    });
+  });
+
+  it('throws 409 when Receptionist tries to cancel a CheckedIn order that already has an InProgress/Done service', async () => {
+    mockFindById({
+      _id: APPOINTMENT_ID,
+      ownerId: OWNER_ID,
+      date: FUTURE_DATE,
+      derivedStatus: 'CheckedIn',
+    });
+    AppointmentService.exists.mockResolvedValue({ _id: 'as-1' });
+
+    await expect(
+      service.cancelAppointment(APPOINTMENT_ID, {
+        userId: 'recep-1',
+        role: 'Receptionist',
+        reason: 'Khách đổi ý',
+      })
+    ).rejects.toMatchObject({
+      status: 409,
+      message: 'Không thể hủy toàn bộ lịch hẹn khi đã có dịch vụ đang thực hiện hoặc hoàn tất',
+    });
+  });
+});

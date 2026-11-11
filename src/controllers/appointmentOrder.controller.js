@@ -4,6 +4,7 @@ const {
   validateListOnlineAppointments,
   validateListAllAppointments,
   validateAppointmentId,
+  validateCancelAppointment,
 } = require('../validators/appointmentOrder.validator');
 
 const handleError = (res, err) => {
@@ -88,10 +89,31 @@ const checkInBooking = async (req, res) => {
   }
 };
 
+const cancelBooking = async (req, res) => {
+  const { errors: idErrors, value: id } = validateAppointmentId(req.params);
+  if (idErrors.length) return sendValidationError(res, idErrors);
+
+  const { errors: bodyErrors, value } = validateCancelAppointment(req.body);
+  if (bodyErrors.length) return sendValidationError(res, bodyErrors);
+
+  try {
+    const appointment = await appointmentService.cancelAppointment(id, {
+      userId: req.user?.id,
+      role: req.user?.role,
+      reason: value.reason,
+    });
+
+    return res.json({ message: 'Hủy lịch hẹn thành công', data: appointment });
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
 module.exports = {
   createOnlineBooking,
   listMyOnlineBooking,
   getMyOnlineBookingById,
   listAllBooking,
-  checkInBooking
+  checkInBooking,
+  cancelBooking,
 };
