@@ -483,17 +483,17 @@
 
 ---
 
-### 7.2. Xem danh sách & lọc chuồng nuôi (`Admin` & `Receptionist`)
+### 7.2. Xem danh sách & lọc chuồng nuôi (`Admin`, `Receptionist`, `Veterinarian`, `Groomer`)
 - **Method**: `GET`
 - **URL**: `http://localhost:9999/api/cages?status=Available&size=M&isIsolated=false&page=1&limit=20`
-- **Auth**: 🔒 `Admin` hoặc `Receptionist`
+- **Auth**: 🔒 `Admin`, `Receptionist`, `Veterinarian` hoặc `Groomer`
 - **Kết quả mong đợi**:
   - `200 OK`: Trả về danh sách chuồng có phân trang.
 
 ---
 
 ### 7.3. Xem chi tiết 1 chuồng & Cập nhật chuồng
-- **Xem chi tiết (`Admin` / `Receptionist`)**:
+- **Xem chi tiết (`Admin` / `Receptionist` / `Veterinarian` / `Groomer`)**:
   - `GET http://localhost:9999/api/cages/:id`
 - **Cập nhật chuồng (Chỉ `Admin`)**:
   - `PATCH http://localhost:9999/api/cages/:id`
@@ -507,10 +507,10 @@
 
 ---
 
-### 7.4. Lễ tân xếp chuồng cho đơn lịch hẹn (`POST /api/cage-assignments` — `SCR-23`)
+### 7.4. Xếp chuồng cho đơn lịch hẹn (`POST /api/cage-assignments` — `SCR-23`, `BR-10`, `UC-27`, `UC-29`)
 - **Method**: `POST`
 - **URL**: `http://localhost:9999/api/cage-assignments`
-- **Auth**: 🔒 Chỉ `Receptionist`
+- **Auth**: 🔒 `Receptionist`, `Veterinarian` hoặc `Groomer`
 - **Body (`JSON`)**:
   ```json
   {
@@ -525,9 +525,9 @@
 
 ---
 
-### 7.5. Lễ tân xem danh sách & chi tiết phân công chuồng
-- **Xem danh sách**: `GET http://localhost:9999/api/cage-assignments?active=true` (🔒 Chỉ `Receptionist`)
-- **Xem chi tiết**: `GET http://localhost:9999/api/cage-assignments/:id` (🔒 Chỉ `Receptionist`)
+### 7.5. Xem danh sách & chi tiết phân công chuồng
+- **Xem danh sách**: `GET http://localhost:9999/api/cage-assignments?active=true` (🔒 `Receptionist`, `Veterinarian` hoặc `Groomer`)
+- **Xem chi tiết**: `GET http://localhost:9999/api/cage-assignments/:id` (🔒 `Receptionist`, `Veterinarian` hoặc `Groomer`)
 
 ---
 

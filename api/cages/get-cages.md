@@ -8,7 +8,7 @@ Get a paginated list of cages, with optional filters and sorting.
 |---|---|
 | **Method** | `GET` |
 | **URL** | http://localhost:9999/api/cages |
-| **Auth** | Required (Bearer token). Roles: `Admin`, `Receptionist` |
+| **Auth** | Required (Bearer token). Roles: `Admin`, `Receptionist`, `Veterinarian`, `Groomer` |
 
 ## Request headers
 

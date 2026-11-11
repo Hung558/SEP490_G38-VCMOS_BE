@@ -388,11 +388,50 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       expect(res.body.message).toMatch(/đã được khóa \(Finalized\)/i);
     });
 
-    it('bắt đầu và hoàn tất nốt dịch vụ số 2 -> tự động chuyển đơn hẹn sang WaitOwner (BR-09) và gán chuồng chờ đón (BR-10)', async () => {
+    it('cho phép Bác sĩ (Veterinarian) gọi GET /api/cages để lấy danh sách chuồng trống chọn waitingCageId (BR-10, UC-27) và chặn PetOwner (403)', async () => {
+      const vetListRes = await request(app)
+        .get('/api/cages?status=Available')
+        .set('Authorization', `Bearer ${vetToken}`);
+      expect(vetListRes.status).toBe(200);
+      expect(vetListRes.body.success).toBe(true);
+      expect(Array.isArray(vetListRes.body.data.items)).toBe(true);
+
+      const vetDetailRes = await request(app)
+        .get(`/api/cages/${finishCage._id}`)
+        .set('Authorization', `Bearer ${vetToken}`);
+      expect(vetDetailRes.status).toBe(200);
+
+      const ownerListRes = await request(app)
+        .get('/api/cages?status=Available')
+        .set('Authorization', `Bearer ${ownerToken}`);
+      expect(ownerListRes.status).toBe(403);
+    });
+
+    it('bắt đầu và hoàn tất nốt dịch vụ số 2 -> kiểm tra tải trọng chuồng (BR-11), tự động chuyển đơn hẹn sang WaitOwner (BR-09) và gán chuồng chờ đón (BR-10)', async () => {
       const startRes = await request(app)
         .post(`/api/medical-records/service/${secondServiceDoc._id}/start`)
         .set('Authorization', `Bearer ${vetToken}`);
       expect(startRes.status).toBe(200);
+
+      // Tạo 1 chuồng cỡ S (<= 5kg) để kiểm tra chặn BR-11 vì Mochi đang nặng 9.2kg
+      const smallCage = await Cage.create({
+        label: 'W-SMALL',
+        size: 'S',
+        status: 'Available',
+      });
+
+      const overWeightRes = await request(app)
+        .post(`/api/medical-records/service/${secondServiceDoc._id}/complete`)
+        .set('Authorization', `Bearer ${vetToken}`)
+        .send({
+          subjectiveNote: 'Khách yêu cầu tiêm phòng dại định kỳ',
+          objectiveNote: 'Thể trạng đủ điều kiện tiêm',
+          assessment: 'Đủ điều kiện tiêm chủng',
+          plan: 'Tiêm 1 mũi vaccine Rabies dưới da, theo dõi 30 phút tại chuồng chờ',
+          waitingCageId: String(smallCage._id),
+        });
+      expect(overWeightRes.status).toBe(400);
+      expect(overWeightRes.body.message).toMatch(/Chuồng cỡ S/i);
 
       const completeRes = await request(app)
         .post(`/api/medical-records/service/${secondServiceDoc._id}/complete`)

@@ -9,7 +9,7 @@ List cage assignments, newest first (sorted by `assignedAt` descending). Results
 | **Method** | `GET` |
 | **URL** | http://localhost:9999/api/cage-assignments |
 | **Auth** | Required: `Authorization: Bearer <token>` |
-| **Allowed roles** | `Receptionist` |
+| **Allowed roles** | `Receptionist`, `Veterinarian`, `Groomer` |
 
 ## Query parameters
 

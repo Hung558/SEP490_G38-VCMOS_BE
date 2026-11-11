@@ -42,10 +42,10 @@ Tài liệu hướng dẫn test từng bước từ A → Z trên **Postman** ch
 
 ---
 
-## BƯỚC 3: Xem danh sách & lọc chuồng (`GET /api/cages` — Admin hoặc Receptionist)
+## BƯỚC 3: Xem danh sách & lọc chuồng (`GET /api/cages` — Admin, Receptionist, Veterinarian hoặc Groomer)
 
 - **Method**: `GET`
-- **Authorization**: `Bearer Token` (dán **`<TOKEN_ADMIN>`** hoặc **`<TOKEN_RECEPTIONIST>`** đều được)
+- **Authorization**: `Bearer Token` (dán **`<TOKEN_ADMIN>`**, **`<TOKEN_RECEPTIONIST>`**, hoặc token của `Veterinarian` / `Groomer`)
 - **Thử lần lượt các URL sau**:
   1. **Xem tất cả chuồng**:
      ```
@@ -85,7 +85,7 @@ Tài liệu hướng dẫn test từng bước từ A → Z trên **Postman** ch
 
 - **Method**: `POST`
 - **URL**: `http://localhost:9999/api/cage-assignments`
-- **Authorization**: `Bearer Token` (dán **`<TOKEN_RECEPTIONIST>`** — lưu ý API này chỉ cho phép role `Receptionist`)
+- **Authorization**: `Bearer Token` (dán **`<TOKEN_RECEPTIONIST>`**, hoặc token của `Veterinarian` / `Groomer` khi xếp chuồng chờ giữa 2 dịch vụ hoặc sau ca khám)
 - **Body** (`raw` → `JSON`):
   ```json
   {
