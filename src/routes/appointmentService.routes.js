@@ -5,7 +5,8 @@ const {
   createOnlineBookingController,
   getAppointmentServicesByOrderIdController,
   assignStaffToAppointmentServiceController,
-  getAppointmentServicesByAssignedStaffIdController
+  getAppointmentServicesByAssignedStaffIdController,
+  cancelAppointmentServiceController,
 } = require('../controllers/appointmentService.controller');
 
 const router = express.Router();
@@ -22,5 +23,8 @@ router.patch('/:id/assign-staff', protect, authorize('Receptionist'), assignStaf
 
 // Bác sĩ / Groomer xem danh sách dịch vụ được phân công cho chính mình (?status=...)
 router.get('/my-queue', protect, authorize('Veterinarian', 'Groomer'), getAppointmentServicesByAssignedStaffIdController);
+
+// PetOwner / Lễ tân hủy 1 dịch vụ lẻ trong lịch hẹn (UC-18, BR-07)
+router.patch('/:id/cancel', protect, authorize('PetOwner', 'Receptionist'), cancelAppointmentServiceController);
 
 module.exports = router;

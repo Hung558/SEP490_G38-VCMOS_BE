@@ -9,6 +9,8 @@ jest.mock('../../src/models/AppointmentService', () => ({
 jest.mock('../../src/models/AppointmentOrder', () => ({
   exists: jest.fn(),
   deleteOne: jest.fn(),
+  findById: jest.fn(),
+  findByIdAndUpdate: jest.fn(),
 }));
 // Không nạp appointmentOrder.service thật (kéo theo nodemailer, Pet, User...)
 jest.mock('../../src/services/appointmentOrder.service', () => ({
@@ -23,7 +25,8 @@ const {
   createOnlineBooking,
   getAppointmentServicesByOrderId,
   assignStaffToAppointmentService,
-  getAppointmentServicesByAssignedStaffId
+  getAppointmentServicesByAssignedStaffId,
+  cancelAppointmentService,
 } = require('../../src/services/appointmentService.service');
 
 // Giả lập chuỗi findOne().sort().select().lean()
@@ -642,6 +645,194 @@ describe('getAppointmentServicesByAssignedStaffId', () => {
       await expect(
         getAppointmentServicesByAssignedStaffId({ assignedStaffId: 'staff-1' })
       ).rejects.toBe(dbError);
+    });
+  });
+});
+
+describe('cancelAppointmentService', () => {
+  const FUTURE_DATE = '2099-12-31';
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+  });
+
+  it('ném lỗi 404 khi không tìm thấy dịch vụ trong lịch hẹn', async () => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(null),
+    });
+
+    await expect(
+      cancelAppointmentService({
+        appointmentServiceId: 'as-missing',
+        userId: 'owner-1',
+        role: 'PetOwner',
+        reason: 'Không cần làm nữa',
+      })
+    ).rejects.toMatchObject({
+      statusCode: 404,
+      message: 'Không tìm thấy dịch vụ trong lịch hẹn',
+    });
+  });
+
+  it('ném lỗi 403 khi PetOwner cố hủy dịch vụ trong đơn của người khác', async () => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'as-1',
+        orderId: 'order-1',
+        status: 'Booked',
+      }),
+    });
+    AppointmentOrder.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'order-1',
+        ownerId: 'owner-2',
+        date: FUTURE_DATE,
+        derivedStatus: 'Booked',
+      }),
+    });
+
+    await expect(
+      cancelAppointmentService({
+        appointmentServiceId: 'as-1',
+        userId: 'owner-1',
+        role: 'PetOwner',
+        reason: 'Đổi ý',
+      })
+    ).rejects.toMatchObject({
+      statusCode: 403,
+      message: 'Bạn chỉ có thể hủy dịch vụ trong lịch hẹn của chính mình',
+    });
+  });
+
+  it('hủy 1 dịch vụ trong đơn nhiều dịch vụ: giữ nguyên trạng thái đơn là Booked (UC-18 Alt Flow 5a)', async () => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'as-1',
+        orderId: 'order-1',
+        status: 'Booked',
+      }),
+    });
+    AppointmentOrder.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'order-1',
+        ownerId: 'owner-1',
+        date: FUTURE_DATE,
+        derivedStatus: 'Booked',
+      }),
+    });
+
+    const updatedService = {
+      _id: 'as-1',
+      orderId: 'order-1',
+      status: 'Cancelled',
+      cancelReason: 'Chỉ khám, không tắm nữa',
+    };
+    AppointmentService.findByIdAndUpdate.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(updatedService),
+    });
+
+    // Đơn có 2 dịch vụ: 1 dịch vụ vừa Cancelled, 1 dịch vụ vẫn Booked
+    AppointmentService.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{ status: 'Cancelled' }, { status: 'Booked' }]),
+    });
+
+    const result = await cancelAppointmentService({
+      appointmentServiceId: 'as-1',
+      userId: 'owner-1',
+      role: 'PetOwner',
+      reason: 'Chỉ khám, không tắm nữa',
+    });
+
+    expect(result).toEqual({
+      message: 'Hủy dịch vụ trong lịch hẹn thành công',
+      data: updatedService,
+    });
+    expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('tự động chuyển đơn sang Cancelled khi toàn bộ dịch vụ trong đơn đều đã bị hủy (UC-18 Step 5)', async () => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'as-1',
+        orderId: 'order-1',
+        status: 'Booked',
+      }),
+    });
+    AppointmentOrder.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'order-1',
+        ownerId: 'owner-1',
+        date: FUTURE_DATE,
+        derivedStatus: 'Booked',
+      }),
+    });
+
+    const updatedService = { _id: 'as-1', orderId: 'order-1', status: 'Cancelled' };
+    AppointmentService.findByIdAndUpdate.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(updatedService),
+    });
+
+    AppointmentService.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{ status: 'Cancelled' }]),
+    });
+
+    await cancelAppointmentService({
+      appointmentServiceId: 'as-1',
+      userId: 'owner-1',
+      role: 'PetOwner',
+      reason: 'Hủy dịch vụ duy nhất',
+    });
+
+    expect(AppointmentOrder.findByIdAndUpdate).toHaveBeenCalledWith('order-1', {
+      $set: {
+        derivedStatus: 'Cancelled',
+        cancelReason: 'Hủy dịch vụ duy nhất',
+        cancelledAt: expect.any(Date),
+        cancelledBy: 'owner-1',
+      },
+    });
+  });
+
+  it('cho phép Lễ tân hủy dịch vụ Waiting trong đơn CheckedIn; nếu dịch vụ còn lại đã Done thì chuyển đơn sang WaitOwner', async () => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'as-2',
+        orderId: 'order-1',
+        status: 'Waiting',
+      }),
+    });
+    AppointmentOrder.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'order-1',
+        ownerId: 'owner-1',
+        date: FUTURE_DATE,
+        derivedStatus: 'CheckedIn',
+      }),
+    });
+
+    AppointmentService.findByIdAndUpdate.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ _id: 'as-2', status: 'Cancelled' }),
+    });
+
+    AppointmentService.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{ status: 'Done' }, { status: 'Cancelled' }]),
+    });
+
+    await cancelAppointmentService({
+      appointmentServiceId: 'as-2',
+      userId: 'recep-1',
+      role: 'Receptionist',
+      reason: 'Khách xin hủy dịch vụ số 2',
+    });
+
+    expect(AppointmentOrder.findByIdAndUpdate).toHaveBeenCalledWith('order-1', {
+      $set: { derivedStatus: 'WaitOwner' },
     });
   });
 });

@@ -31,6 +31,9 @@ const appointmentServiceSchema = new mongoose.Schema(
     enqueueAt: { type: Date, default: null },
     dequeueAt: { type: Date, default: null },
     groomingNote: { type: groomingNoteSchema, default: null },
+    cancelReason: { type: String, default: null },
+    cancelledAt: { type: Date, default: null },
+    cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true }
 );

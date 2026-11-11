@@ -675,6 +675,43 @@
     - Tạo đơn hẹn `AppointmentOrder` với `isOnline: false`, **`derivedStatus: "CheckedIn"`** và `checkedInAt` ngay lập tức.
     - Dịch vụ có `assignedStaffId` tự động nhảy sang **`status: "Waiting"`** kèm `queueNo` và `enqueueAt`.
 
+---
+
+### 8.9. `PetOwner` / `Receptionist` hủy toàn bộ đơn lịch hẹn (`UC-18`, `BR-07`)
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/appointment-orders/:id/cancel`
+- **Auth**: 🔒 `PetOwner` hoặc `Receptionist`
+- **Body (`JSON`)**:
+  ```json
+  {
+    "reason": "Bận việc đột xuất không đưa bé đi khám được"
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `200 OK`: Chuyển `derivedStatus` của đơn sang **`"Cancelled"`**, lưu `cancelReason`, `cancelledAt`, `cancelledBy` và tự động hủy tất cả dịch vụ chưa bắt đầu (`Booked`, `Waiting`) thuộc đơn đó (đồng thời rút khỏi hàng đợi nhân sự).
+  - `400 Bad Request`: Không nhập lý do hủy hoặc lý do vượt quá 200 ký tự.
+  - `403 Forbidden`: `PetOwner` cố hủy lịch hẹn của người khác.
+  - `409 Conflict`: `PetOwner` tự hủy khi đã `CheckedIn` hoặc sát giờ hẹn `< 2 giờ` (`BR-07`), hoặc `Receptionist` hủy đơn đã có dịch vụ `InProgress` / `Done`.
+
+---
+
+### 8.10. `PetOwner` / `Receptionist` hủy lẻ 1 dịch vụ trong lịch hẹn (`UC-18`, `BR-07`, `BR-09`)
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/appointment-services/:id/cancel`
+- **Auth**: 🔒 `PetOwner` hoặc `Receptionist`
+- **Body (`JSON`)**:
+  ```json
+  {
+    "reason": "Chỉ khám tổng quát, tạm hoãn dịch vụ tắm spa"
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `200 OK`: Chuyển `status` của dịch vụ sang **`"Cancelled"`**, giải phóng `queueNo` / `enqueueAt`.
+    - Nếu đơn vẫn còn dịch vụ khác chưa hủy: đơn giữ nguyên trạng thái `Booked` (hoặc chuyển sang `WaitOwner` nếu đơn đã `CheckedIn` và mọi dịch vụ còn lại đều đã `Done`).
+    - Nếu toàn bộ dịch vụ trong đơn đều đã bị hủy: tự động chuyển `derivedStatus` của đơn sang **`"Cancelled"`**.
+  - `400 Bad Request`: Không nhập lý do hủy hoặc vượt quá 200 ký tự.
+  - `403 Forbidden`: `PetOwner` cố hủy dịch vụ trong đơn của người khác.
+  - `409 Conflict`: Dịch vụ đã bắt đầu/hoàn tất hoặc vi phạm điều kiện thời gian `BR-07`.
 
 ---
 

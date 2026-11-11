@@ -9,6 +9,10 @@ const { createCageAssignment } = require('./cageAssignment.service');
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
 const MAX_CODE_RETRIES = 5;
+const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
+
+const todayVN = () =>
+  new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
 
 const createError = (status, message) => {
   const err = new Error(message);
@@ -321,10 +325,120 @@ const checkInAppointment = async (id, options = {}) => {
   );
 };
 
+/**
+ * UC-18, BR-07: Hủy toàn bộ đơn lịch hẹn (do PetOwner tự hủy trước Check-in & trước giờ hẹn >= 2h,
+ * hoặc do Receptionist hủy theo yêu cầu của khách khi chưa có dịch vụ nào bắt đầu).
+ */
+const cancelAppointment = async (id, { userId, role, reason } = {}) => {
+  // 1. Tìm lịch hẹn cần hủy
+  const order = await AppointmentOrder.findById(id)
+    .select('code ownerId petId date slotStart derivedStatus')
+    .lean();
+  if (!order) {
+    throw createError(404, 'Không tìm thấy lịch hẹn');
+  }
+
+  // 2. Kiểm tra quyền sở hữu: PetOwner chỉ được hủy lịch hẹn của chính mình (chống IDOR)
+  if (role === 'PetOwner' && String(order.ownerId) !== String(userId)) {
+    throw createError(403, 'Bạn chỉ có thể hủy lịch hẹn của chính mình');
+  }
+
+  // 3. Kiểm tra trạng thái lịch hẹn và điều kiện thời gian (BR-07, UC-18)
+  if (order.derivedStatus === 'Cancelled') {
+    throw createError(409, 'Lịch hẹn này đã bị hủy trước đó');
+  }
+
+  if (role === 'PetOwner') {
+    // PetOwner chỉ được tự hủy trực tuyến khi đơn đang ở trạng thái Booked (chưa Check-in)
+    if (order.derivedStatus !== 'Booked') {
+      throw createError(
+        409,
+        'Lịch hẹn này không thể tự hủy trực tuyến sau khi đã check-in. Vui lòng liên hệ phòng khám để được hỗ trợ'
+      );
+    }
+
+    // Kiểm tra mốc 2 giờ trước giờ hẹn (BR-07)
+    if (order.slotStart) {
+      const scheduledStartMs = new Date(`${order.date}T${order.slotStart}:00+07:00`).getTime();
+      if (!Number.isNaN(scheduledStartMs) && scheduledStartMs - Date.now() < CANCELLATION_WINDOW_MS) {
+        throw createError(
+          409,
+          'Không thể tự hủy lịch hẹn trong vòng 2 giờ trước giờ hẹn. Vui lòng liên hệ phòng khám để được hỗ trợ'
+        );
+      }
+    } else if (order.date && order.date < todayVN()) {
+      throw createError(
+        409,
+        'Không thể tự hủy lịch hẹn đã qua ngày hẹn. Vui lòng liên hệ phòng khám để được hỗ trợ'
+      );
+    }
+  } else {
+    // Lễ tân chỉ được hủy đơn khi đơn đang là Booked, hoặc CheckedIn nhưng chưa có dịch vụ nào bắt đầu
+    if (!['Booked', 'CheckedIn'].includes(order.derivedStatus)) {
+      throw createError(
+        409,
+        `Không thể hủy lịch hẹn đang ở trạng thái "${order.derivedStatus}"`
+      );
+    }
+
+    if (order.derivedStatus === 'CheckedIn' && typeof AppointmentService.exists === 'function') {
+      const hasStartedService = await AppointmentService.exists({
+        orderId: id,
+        status: { $in: ['InProgress', 'Done'] },
+      });
+      if (hasStartedService) {
+        throw createError(
+          409,
+          'Không thể hủy toàn bộ lịch hẹn khi đã có dịch vụ đang thực hiện hoặc hoàn tất'
+        );
+      }
+    }
+  }
+
+  // 4. Cập nhật trạng thái đơn hẹn sang Cancelled
+  const now = new Date();
+  const updatedOrder = await AppointmentOrder.findOneAndUpdate(
+    { _id: id, derivedStatus: order.derivedStatus },
+    {
+      $set: {
+        derivedStatus: 'Cancelled',
+        cancelReason: reason,
+        cancelledAt: now,
+        cancelledBy: userId,
+      },
+    },
+    { new: true }
+  ).lean();
+
+  if (!updatedOrder) {
+    throw createError(409, 'Trạng thái lịch hẹn đã thay đổi, vui lòng thử lại');
+  }
+
+  // 5. Hủy toàn bộ các dịch vụ chưa bắt đầu trong đơn và giải phóng khỏi hàng đợi nhân sự
+  if (typeof AppointmentService.updateMany === 'function') {
+    await AppointmentService.updateMany(
+      { orderId: id, status: { $in: ['Booked', 'Waiting'] } },
+      {
+        $set: {
+          status: 'Cancelled',
+          cancelReason: reason,
+          cancelledAt: now,
+          cancelledBy: userId,
+          queueNo: null,
+          enqueueAt: null,
+        },
+      }
+    );
+  }
+
+  return updatedOrder;
+};
+
 module.exports = {
   createOnlineAppointment,
   listMyOnlineAppointments,
   getMyOnlineAppointment,
   listAllAppointments,
-  checkInAppointment
+  checkInAppointment,
+  cancelAppointment,
 };

@@ -3,14 +3,16 @@ const {
   createOnlineBooking,
   getAppointmentServicesByOrderId,
   assignStaffToAppointmentService,
-  getAppointmentServicesByAssignedStaffId
+  getAppointmentServicesByAssignedStaffId,
+  cancelAppointmentService,
 } = require('../services/appointmentService.service');
 const {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
   validateGetServicesByOrderId,
   validateAssignStaffToService,
-  validateGetServicesByAssignedStaffId
+  validateGetServicesByAssignedStaffId,
+  validateCancelAppointmentService,
 } = require('../validators/appointmentService.validator');
 
 const handleError = (res, err) => {
@@ -103,10 +105,30 @@ async function getAppointmentServicesByAssignedStaffIdController(req, res) {
   }
 }
 
+/**
+ * PATCH /appointment-services/:id/cancel
+ * Body: { reason }
+ * PetOwner hoặc Lễ tân hủy 1 dịch vụ lẻ trong lịch hẹn (UC-18, BR-07)
+ */
+async function cancelAppointmentServiceController(req, res) {
+  try {
+    const validated = await validateCancelAppointmentService(req.params.id, req.body);
+    const { message, data } = await cancelAppointmentService({
+      ...validated,
+      userId: req.user?.id,
+      role: req.user?.role,
+    });
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   createOnlineAppointmentServiceController,
   createOnlineBookingController,
   getAppointmentServicesByOrderIdController,
   assignStaffToAppointmentServiceController,
-  getAppointmentServicesByAssignedStaffIdController
+  getAppointmentServicesByAssignedStaffIdController,
+  cancelAppointmentServiceController,
 };
