@@ -31,6 +31,7 @@ const {
   assignStaffToAppointmentService,
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
+  updateAppointmentServiceStatus,
 } = require('../../src/services/appointmentService.service');
 
 // Giả lập chuỗi findOne().sort().select().lean()
@@ -911,6 +912,224 @@ describe('cancelAppointmentService', () => {
 
     expect(AppointmentOrder.findByIdAndUpdate).toHaveBeenCalledWith('order-1', {
       $set: { derivedStatus: 'WaitOwner' },
+    });
+  });
+});
+describe('updateAppointmentServiceStatus', () => {
+  const POPULATE_ARGS = [
+    ['serviceId'],
+    ['preferredStaffId', 'code fullName role status'],
+    ['assignedStaffId', 'code fullName role status'],
+  ];
+
+  const mockService = (result) => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(result),
+    });
+  };
+
+  const mockOrder = (result) => {
+    AppointmentOrder.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue(result),
+    });
+  };
+
+  // Giả lập chuỗi findByIdAndUpdate().populate().populate().populate().lean()
+  const mockUpdate = (result) => {
+    const chain = {
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(result),
+    };
+    AppointmentService.findByIdAndUpdate.mockReturnValue(chain);
+    return chain;
+  };
+
+  // Giả lập danh sách trạng thái các dịch vụ trong cùng đơn
+  const mockSiblingStatuses = (...statuses) => {
+    AppointmentService.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(statuses.map((status) => ({ status }))),
+    });
+  };
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockService({ _id: 'as-1', orderId: 'order-1', status: 'Waiting' });
+    mockOrder({ _id: 'order-1', derivedStatus: 'CheckedIn' });
+    mockUpdate({ _id: 'as-1', orderId: 'order-1', status: 'InProgress' });
+  });
+
+  describe('kiểm tra dữ liệu liên quan', () => {
+    it('ném lỗi 404 khi không tìm thấy dịch vụ trong lịch hẹn', async () => {
+      mockService(null);
+
+      await expect(
+        updateAppointmentServiceStatus({ appointmentServiceId: 'as-missing', status: 'InProgress' })
+      ).rejects.toMatchObject({
+        statusCode: 404,
+        message: 'Không tìm thấy dịch vụ trong lịch hẹn',
+      });
+      expect(AppointmentOrder.findById).not.toHaveBeenCalled();
+      expect(AppointmentService.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('ném lỗi 404 khi không tìm thấy lịch hẹn cha', async () => {
+      mockOrder(null);
+
+      await expect(
+        updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'InProgress' })
+      ).rejects.toMatchObject({
+        statusCode: 404,
+        message: 'Không tìm thấy lịch hẹn',
+      });
+      expect(AppointmentOrder.findById).toHaveBeenCalledWith('order-1');
+      expect(AppointmentService.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it.each(['Done', 'Cancelled', 'Overdue'])(
+      'ném lỗi 409 khi lịch hẹn đang ở trạng thái %s',
+      async (orderStatus) => {
+        mockOrder({ _id: 'order-1', derivedStatus: orderStatus });
+
+        await expect(
+          updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'InProgress' })
+        ).rejects.toMatchObject({
+          statusCode: 409,
+          message: `Không thể cập nhật dịch vụ của lịch hẹn đang ở trạng thái "${orderStatus}"`,
+        });
+        expect(AppointmentService.findByIdAndUpdate).not.toHaveBeenCalled();
+        expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  describe('cập nhật dịch vụ', () => {
+    it('chuyển sang InProgress: cập nhật status và ghi nhận dequeueAt', async () => {
+      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'InProgress' });
+
+      expect(AppointmentService.findByIdAndUpdate).toHaveBeenCalledWith(
+        'as-1',
+        { $set: { status: 'InProgress', dequeueAt: expect.any(Date) } },
+        { returnDocument: 'after' }
+      );
+    });
+
+    it('chuyển sang trạng thái khác InProgress: chỉ cập nhật status, không ghi dequeueAt', async () => {
+      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Waiting' });
+
+      expect(AppointmentService.findByIdAndUpdate).toHaveBeenCalledWith(
+        'as-1',
+        { $set: { status: 'Waiting' } },
+        { returnDocument: 'after' }
+      );
+    });
+
+    it('populate serviceId, preferredStaffId, assignedStaffId và dùng lean()', async () => {
+      const chain = mockUpdate({ _id: 'as-1', status: 'InProgress' });
+
+      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'InProgress' });
+
+      POPULATE_ARGS.forEach((args) => expect(chain.populate).toHaveBeenCalledWith(...args));
+      expect(chain.lean).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('đồng bộ trạng thái đơn khi chuyển sang InProgress', () => {
+    it('chuyển đơn CheckedIn sang InProgress', async () => {
+      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'InProgress' });
+
+      expect(AppointmentOrder.findByIdAndUpdate).toHaveBeenCalledWith('order-1', {
+        $set: { derivedStatus: 'InProgress' },
+      });
+    });
+
+    it.each(['Booked', 'InProgress', 'WaitOwner'])(
+      'không đổi trạng thái đơn khi đơn đang ở trạng thái %s',
+      async (orderStatus) => {
+        mockOrder({ _id: 'order-1', derivedStatus: orderStatus });
+
+        await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'InProgress' });
+
+        expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+      }
+    );
+  });
+
+  describe('đồng bộ trạng thái đơn khi chuyển sang Done', () => {
+    beforeEach(() => {
+      mockService({ _id: 'as-1', orderId: 'order-1', status: 'InProgress' });
+      mockUpdate({ _id: 'as-1', orderId: 'order-1', status: 'Done' });
+    });
+
+    it.each(['CheckedIn', 'InProgress'])(
+      'chuyển đơn %s sang WaitOwner khi mọi dịch vụ chưa hủy đều Done',
+      async (orderStatus) => {
+        mockOrder({ _id: 'order-1', derivedStatus: orderStatus });
+        mockSiblingStatuses('Done', 'Done', 'Cancelled');
+
+        await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
+
+        expect(AppointmentService.find).toHaveBeenCalledWith({ orderId: 'order-1' });
+        expect(AppointmentOrder.findByIdAndUpdate).toHaveBeenCalledWith('order-1', {
+          $set: { derivedStatus: 'WaitOwner' },
+        });
+      }
+    );
+
+    it('giữ nguyên đơn khi vẫn còn dịch vụ chưa Done', async () => {
+      mockSiblingStatuses('Done', 'InProgress');
+
+      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
+
+      expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('giữ nguyên đơn khi không còn dịch vụ nào chưa hủy', async () => {
+      mockSiblingStatuses('Cancelled');
+
+      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
+
+      expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('không truy vấn các dịch vụ khác và không đổi đơn khi đơn đang ở trạng thái Booked', async () => {
+      mockOrder({ _id: 'order-1', derivedStatus: 'Booked' });
+
+      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
+
+      expect(AppointmentService.find).not.toHaveBeenCalled();
+      expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('kết quả trả về', () => {
+    it('trả về message tiếng Việt và dịch vụ đã cập nhật', async () => {
+      const updated = { _id: 'as-1', orderId: 'order-1', status: 'InProgress' };
+      mockUpdate(updated);
+
+      const result = await updateAppointmentServiceStatus({
+        appointmentServiceId: 'as-1',
+        status: 'InProgress',
+      });
+
+      expect(result).toEqual({
+        message: 'Cập nhật trạng thái dịch vụ thành công',
+        data: updated,
+      });
+    });
+  });
+
+  describe('xử lý lỗi', () => {
+    it('ném lại nguyên lỗi từ database khi cập nhật', async () => {
+      const dbError = new Error('DB down');
+      AppointmentService.findByIdAndUpdate.mockReturnValue({
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockRejectedValue(dbError),
+      });
+
+      await expect(
+        updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'InProgress' })
+      ).rejects.toBe(dbError);
     });
   });
 });

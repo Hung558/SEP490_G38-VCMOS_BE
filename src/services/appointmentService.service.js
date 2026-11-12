@@ -33,7 +33,6 @@ const createError = (message, statusCode = 400) => {
 /**
  * Tạo mới dịch vụ cho lịch hẹn online.
  *
- * Dữ liệu đầu vào được giả định là hợp lệ.
  * `preferredStaffId`, `assignedStaffId`, `status`, `queueNo`, `enqueueAt`,
  * `dequeueAt` và `groomingNote` không nhận từ đầu vào, dùng giá trị mặc định của schema.
  *
@@ -415,6 +414,71 @@ async function cancelAppointmentService({ appointmentServiceId, userId, role, re
   };
 }
 
+/**
+ * Cập nhật trạng thái của 1 dịch vụ trong lịch hẹn.
+ *
+ * Không kiểm tra quyền hay luật chuyển trạng thái (giả định đã xử lý ở middleware / validator).
+ * - Khi chuyển sang 'InProgress': ghi nhận `dequeueAt` (rời hàng đợi); đơn 'CheckedIn' -> 'InProgress'.
+ * - Khi tất cả dịch vụ chưa hủy của đơn đều 'Done': đơn chuyển sang 'WaitOwner'.
+ *
+ * @param {Object} payload
+ * @param {string} payload.appointmentServiceId
+ * @param {string} payload.status - Trạng thái mới (Booked, Waiting, InProgress, Done, Cancelled, Overdue)
+ * @returns {Promise<{ message: string, data: AppointmentService }>}
+ * @throws {Error} 404 nếu không tìm thấy dịch vụ hoặc lịch hẹn
+ */
+async function updateAppointmentServiceStatus({ appointmentServiceId, status }) {
+  // 1. Tìm dịch vụ trong lịch hẹn
+  const currentService = await AppointmentService.findById(appointmentServiceId).lean();
+  if (!currentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+
+  // 2. Tìm đơn cha và đảm bảo đơn chưa kết thúc
+  const order = await AppointmentOrder.findById(currentService.orderId).lean();
+  if (!order) {
+    throw createError('Không tìm thấy lịch hẹn', 404);
+  }
+  if (['Done', 'Cancelled', 'Overdue'].includes(order.derivedStatus)) {
+    throw createError(
+      `Không thể cập nhật dịch vụ của lịch hẹn đang ở trạng thái "${order.derivedStatus}"`,
+      409
+    );
+  }
+
+  // 3. Cập nhật trạng thái dịch vụ
+  const fieldsToSet = { status };
+  if (status === 'InProgress') fieldsToSet.dequeueAt = new Date();
+
+  const updatedService = await AppointmentService.findByIdAndUpdate(
+    appointmentServiceId,
+    { $set: fieldsToSet },
+    { returnDocument: 'after' }
+  )
+    .populate('serviceId')
+    .populate('preferredStaffId', 'code fullName role status')
+    .populate('assignedStaffId', 'code fullName role status')
+    .lean();
+
+  // 4. Đồng bộ trạng thái đơn lịch hẹn
+  if (status === 'InProgress' && order.derivedStatus === 'CheckedIn') {
+    await AppointmentOrder.findByIdAndUpdate(order._id, { $set: { derivedStatus: 'InProgress' } });
+  } else if (status === 'Done' && ['CheckedIn', 'InProgress'].includes(order.derivedStatus)) {
+    const allServices = await AppointmentService.find({ orderId: order._id })
+      .select('status')
+      .lean();
+    const activeServices = allServices.filter((item) => item.status !== 'Cancelled');
+    if (activeServices.length > 0 && activeServices.every((item) => item.status === 'Done')) {
+      await AppointmentOrder.findByIdAndUpdate(order._id, { $set: { derivedStatus: 'WaitOwner' } });
+    }
+  }
+
+  return {
+    message: 'Cập nhật trạng thái dịch vụ thành công',
+    data: updatedService,
+  };
+}
+
 module.exports = {
   createOnlineAppointmentService,
   createOnlineBooking,
@@ -422,4 +486,5 @@ module.exports = {
   assignStaffToAppointmentService,
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
+  updateAppointmentServiceStatus,
 };

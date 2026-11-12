@@ -385,6 +385,57 @@ async function validateCancelAppointmentService(appointmentServiceId, payload) {
   };
 }
 
+/**
+ * Kiểm tra dữ liệu trước khi gọi `updateAppointmentServiceStatus`.
+ * Trả về payload đã kiểm tra nếu hợp lệ, ném lỗi (có `statusCode`) nếu không hợp lệ.
+ *
+ * Không kiểm tra quyền hay luật chuyển trạng thái (giống service): chỉ kiểm tra định dạng,
+ * sự tồn tại của dịch vụ / lịch hẹn và lịch hẹn chưa kết thúc.
+ *
+ * @param {string} appointmentServiceId - ID của AppointmentService trên params
+ * @param {Object} payload - { status }
+ * @returns {Promise<{ appointmentServiceId: string, status: string }>}
+ * @throws {Error} lỗi với `statusCode` 400 | 404 | 409 và thông báo tiếng Việt
+ */
+async function validateUpdateAppointmentServiceStatus(appointmentServiceId, payload) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+
+  const data = payload || {};
+  const { status } = data;
+
+  // 1. Kiểm tra định dạng
+  if (!status) throw createError('status là bắt buộc');
+  if (typeof status !== 'string' || !SERVICE_STATUSES.includes(status)) {
+    throw createError(`status phải là một trong: ${SERVICE_STATUSES.join(', ')}`);
+  }
+
+  // 2. Kiểm tra dịch vụ trong lịch hẹn tồn tại
+  const appointmentService = await AppointmentService.findById(appointmentServiceId)
+    .select('orderId')
+    .lean();
+  if (!appointmentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+
+  // 3. Kiểm tra lịch hẹn tồn tại và chưa kết thúc
+  const order = await AppointmentOrder.findById(appointmentService.orderId)
+    .select('derivedStatus')
+    .lean();
+  if (!order) {
+    throw createError('Không tìm thấy lịch hẹn', 404);
+  }
+  if (BLOCKED_ORDER_STATUSES.includes(order.derivedStatus)) {
+    throw createError(
+      `Không thể cập nhật dịch vụ của lịch hẹn đang ở trạng thái "${order.derivedStatus}"`,
+      409
+    );
+  }
+
+  return { appointmentServiceId, status };
+}
+
 module.exports = {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
@@ -392,4 +443,5 @@ module.exports = {
   validateAssignStaffToService,
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
+  validateUpdateAppointmentServiceStatus,
 };

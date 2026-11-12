@@ -5,6 +5,7 @@ const {
   assignStaffToAppointmentService,
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
+  updateAppointmentServiceStatus,
 } = require('../services/appointmentService.service');
 const {
   validateCreateOnlineAppointmentService,
@@ -13,6 +14,7 @@ const {
   validateAssignStaffToService,
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
+  validateUpdateAppointmentServiceStatus,
 } = require('../validators/appointmentService.validator');
 
 const handleError = (res, err) => {
@@ -124,6 +126,24 @@ async function cancelAppointmentServiceController(req, res) {
   }
 }
 
+/**
+ * PATCH /appointment-services/:id/start
+ * Không cần body: status luôn được đặt thành 'InProgress'.
+ * Groomer / Veterinarian bắt đầu thực hiện 1 dịch vụ trong lịch hẹn
+ * (phân quyền được kiểm tra ở route bằng authorize('Groomer', 'Veterinarian'))
+ */
+async function startAppointmentServiceController(req, res) {
+  try {
+    const validated = await validateUpdateAppointmentServiceStatus(req.params.id, {
+      status: 'InProgress',
+    });
+    const { message, data } = await updateAppointmentServiceStatus(validated);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   createOnlineAppointmentServiceController,
   createOnlineBookingController,
@@ -131,4 +151,5 @@ module.exports = {
   assignStaffToAppointmentServiceController,
   getAppointmentServicesByAssignedStaffIdController,
   cancelAppointmentServiceController,
+  startAppointmentServiceController,
 };

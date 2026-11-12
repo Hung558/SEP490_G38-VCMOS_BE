@@ -7,6 +7,7 @@ const {
   assignStaffToAppointmentServiceController,
   getAppointmentServicesByAssignedStaffIdController,
   cancelAppointmentServiceController,
+  startAppointmentServiceController,
 } = require('../controllers/appointmentService.controller');
 
 const router = express.Router();
@@ -23,6 +24,9 @@ router.patch('/:id/assign-staff', protect, authorize('Receptionist'), assignStaf
 
 // Bác sĩ / Groomer xem danh sách dịch vụ được phân công cho chính mình (?status=...)
 router.get('/my-queue', protect, authorize('Veterinarian', 'Groomer'), getAppointmentServicesByAssignedStaffIdController);
+
+// Bác sĩ / Groomer bắt đầu thực hiện 1 dịch vụ trong lịch hẹn (status -> InProgress)
+router.patch('/:id/start', protect, authorize('Veterinarian', 'Groomer'), startAppointmentServiceController);
 
 // PetOwner / Lễ tân hủy 1 dịch vụ lẻ trong lịch hẹn (UC-18, BR-07)
 router.patch('/:id/cancel', protect, authorize('PetOwner', 'Receptionist'), cancelAppointmentServiceController);
