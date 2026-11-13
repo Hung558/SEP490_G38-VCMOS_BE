@@ -57,7 +57,19 @@ const validateCreateWalkInBooking = (body = {}) => {
     };
   }
 
-  const { phone, fullName, email, petId, petInfo, date, note, intake, services, cageId } = body;
+  const {
+    phone,
+    fullName,
+    email,
+    petId,
+    petInfo,
+    date,
+    note,
+    intake,
+    services,
+    cageId,
+    requiresIsolation,
+  } = body;
 
   // 1. Validate thông tin khách hàng
   let cleanPhone;
@@ -243,13 +255,22 @@ const validateCreateWalkInBooking = (body = {}) => {
     }
   }
 
-  // 6. Validate chuồng lưu giữ (cageId - tuỳ chọn)
+  // 6. Validate chuồng lưu giữ (cageId & requiresIsolation - tuỳ chọn)
   let cleanCageId = null;
   if (!isBlank(cageId)) {
     if (typeof cageId !== 'string' || !isValidObjectId(cageId)) {
       errors.cageId = 'Mã chuồng lưu giữ (cageId) không hợp lệ';
     } else {
       cleanCageId = cageId;
+    }
+  }
+
+  let cleanRequiresIsolation = false;
+  if (requiresIsolation !== undefined && requiresIsolation !== null) {
+    if (typeof requiresIsolation !== 'boolean') {
+      errors.requiresIsolation = 'Cờ chuồng cách ly (requiresIsolation) phải là true hoặc false';
+    } else {
+      cleanRequiresIsolation = requiresIsolation;
     }
   }
 
@@ -267,6 +288,7 @@ const validateCreateWalkInBooking = (body = {}) => {
       intake: cleanIntake,
       services: cleanServices,
       cageId: cleanCageId,
+      requiresIsolation: cleanRequiresIsolation,
     },
   };
 };

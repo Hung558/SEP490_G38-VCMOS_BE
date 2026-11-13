@@ -3,8 +3,11 @@ const nodemailer = require('nodemailer');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Pet = require('../models/Pet');
 const User = require('../models/User');
+const Cage = require('../models/Cage');
+const CageAssignment = require('../models/CageAssignment');
 const AppointmentService = require('../models/AppointmentService');
-const { createCageAssignment } = require('./cageAssignment.service');
+const { canCageAccommodatePet } = require('./cage.service');
+const { createCageAssignment, releaseCageAssignment } = require('./cageAssignment.service');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
@@ -138,10 +141,13 @@ const notifyReceptionistsOfNewAppointment = async (appointment, pet) => {
  * ownerId comes from the token (never from the request body).
  */
 const createOnlineAppointment = async (ownerId, { petId, date, note, slotStart, slotEnd }) => {
-  // 1. The pet must exist and belong to the current user
-  const pet = await Pet.findOne({ _id: petId, ownerId }).select('_id name').lean();
+  // 1. The pet must exist, belong to the current user, and still be Active
+  const pet = await Pet.findOne({ _id: petId, ownerId }).select('_id name status').lean();
   if (!pet) {
     throw createError(404, 'Không tìm thấy thú cưng');
+  }
+  if (pet.status === 'Deleted') {
+    throw createError(400, 'Không thể đặt lịch cho thú cưng đã bị xóa khỏi hồ sơ');
   }
 
   // 2. Prevent double-booking the same pet on the same day
@@ -271,12 +277,72 @@ const listAllAppointments = async ({
   };
 };
 
+const loadPetWeight = async (petId) => {
+  if (!petId || typeof Pet.findById !== 'function') return undefined;
+  const petQuery = Pet.findById(petId);
+  const petDoc =
+    petQuery && typeof petQuery.select === 'function'
+      ? await petQuery.select('weight').lean()
+      : await petQuery;
+  return petDoc?.weight;
+};
+
+/**
+ * Kiểm tra chuồng lưu giữ hợp lệ (tồn tại, còn trống Available, đạt tải trọng & cách ly BR-11)
+ * trước khi thực hiện ghi DB lúc check-in để tránh trạng thái dở dang.
+ */
+const assertCageReadyForCheckIn = async ({ cageId, petId, requiresIsolation }) => {
+  if (typeof Cage.findById !== 'function') return undefined;
+  const cage = await Cage.findById(cageId).lean();
+  if (!cage) {
+    throw createError(404, 'Không tìm thấy chuồng');
+  }
+  if (cage.status !== 'Available') {
+    throw createError(409, 'Chuồng không ở trạng thái trống (Available)');
+  }
+
+  const petWeight = await loadPetWeight(petId);
+  const check = canCageAccommodatePet(
+    cage.size,
+    petWeight,
+    cage.isIsolated,
+    Boolean(requiresIsolation),
+    cage.maxWeightKg
+  );
+  if (!check.allowed) {
+    throw createError(400, check.reason);
+  }
+  return petWeight;
+};
+
 /**
  * Only a 'Booked' appointment can be checked in. The status check and the update
  * happen in one atomic operation, so two concurrent check-ins can't both succeed.
  * Also transitions assigned services from 'Booked' to 'Waiting' and optionally assigns a holding cage (UC-22, BR-09, BR-11).
  */
 const checkInAppointment = async (id, options = {}) => {
+  const shouldAssignCage = Boolean(options && options.cageId && options.staffId);
+  let precheckedPetWeight;
+  let previousIntake = null;
+
+  if (shouldAssignCage) {
+    const preOrder = await AppointmentOrder.findById(id)
+      .select('derivedStatus petId intake')
+      .lean();
+    if (!preOrder) {
+      throw createError(404, 'Không tìm thấy lịch hẹn');
+    }
+    if (preOrder.derivedStatus !== 'Booked') {
+      throw createError(409, `Không thể check-in lịch hẹn đang ở trạng thái "${preOrder.derivedStatus}"`);
+    }
+    previousIntake = preOrder.intake || null;
+    precheckedPetWeight = await assertCageReadyForCheckIn({
+      cageId: options.cageId,
+      petId: preOrder.petId,
+      requiresIsolation: options.requiresIsolation,
+    });
+  }
+
   const checkedInAt = new Date();
   const updateFields = { derivedStatus: 'CheckedIn', checkedInAt };
 
@@ -298,34 +364,60 @@ const checkInAppointment = async (id, options = {}) => {
 
   if (appointment) {
     // 1. Khi khách đến Check-in, tự động chuyển các dịch vụ đã phân công nhân viên từ Booked -> Waiting
+    let transitionedServiceIds = [];
     if (typeof AppointmentService.updateMany === 'function') {
+      if (shouldAssignCage && typeof AppointmentService.find === 'function') {
+        const bookedServices = await AppointmentService.find({
+          orderId: id,
+          status: 'Booked',
+          assignedStaffId: { $ne: null },
+        })
+          .select('_id')
+          .lean();
+        transitionedServiceIds = bookedServices.map((s) => s._id);
+      }
+
       await AppointmentService.updateMany(
         { orderId: id, status: 'Booked', assignedStaffId: { $ne: null } },
         { $set: { status: 'Waiting', enqueueAt: appointment.checkedInAt || new Date() } }
       );
     }
 
-    // 2. Nếu Lễ tân chọn chuồng ngay khi Check-in (UC-22 & BR-09), kiểm tra cân nặng thú cưng (BR-11) và gán chuồng
-    if (options && options.cageId && options.staffId) {
-      let petWeight;
-      if (appointment.petId && typeof Pet.findById === 'function') {
-        const petQuery = Pet.findById(appointment.petId);
-        const petDoc =
-          petQuery && typeof petQuery.select === 'function'
-            ? await petQuery.select('weight').lean()
-            : await petQuery;
-        petWeight = petDoc?.weight;
+    // 2. Nếu Lễ tân chọn chuồng ngay khi Check-in (UC-22 & BR-09), gán chuồng và hoàn tác nếu gặp race condition
+    if (shouldAssignCage) {
+      const petWeight =
+        precheckedPetWeight !== undefined ? precheckedPetWeight : await loadPetWeight(appointment.petId);
+
+      try {
+        const cageAssignment = await createCageAssignment({
+          cageId: options.cageId,
+          orderId: String(id),
+          assignedById: String(options.staffId),
+          petWeight,
+          requiresIsolation: Boolean(options.requiresIsolation),
+        });
+
+        return { ...appointment, cageAssignment };
+      } catch (err) {
+        // Hoàn tác đơn và các dịch vụ vừa chuyển sang Waiting nếu gán chuồng thất bại
+        const rollbackOrder = {
+          derivedStatus: 'Booked',
+          checkedInAt: null,
+        };
+        if (options && options.intake) {
+          rollbackOrder.intake = previousIntake;
+        }
+        await Promise.allSettled([
+          AppointmentOrder.findByIdAndUpdate(id, { $set: rollbackOrder }),
+          transitionedServiceIds.length > 0
+            ? AppointmentService.updateMany(
+                { _id: { $in: transitionedServiceIds } },
+                { $set: { status: 'Booked', enqueueAt: null } }
+              )
+            : Promise.resolve(),
+        ]);
+        throw err;
       }
-
-      const cageAssignment = await createCageAssignment({
-        cageId: options.cageId,
-        orderId: String(id),
-        assignedById: String(options.staffId),
-        petWeight,
-        requiresIsolation: Boolean(options.requiresIsolation),
-      });
-
-      return { ...appointment, cageAssignment };
     }
 
     return appointment;
@@ -446,6 +538,19 @@ const cancelAppointment = async (id, { userId, role, reason } = {}) => {
         },
       }
     );
+  }
+
+  // 6. Nếu đơn đã gán chuồng chờ lúc Check-in, tự động giải phóng chuồng về Available (tránh kẹt chuồng Occupied)
+  if (typeof CageAssignment.findOne === 'function') {
+    const openAssignment = await CageAssignment.findOne({
+      orderId: id,
+      releasedAt: null,
+    })
+      .select('_id')
+      .lean();
+    if (openAssignment) {
+      await releaseCageAssignment(String(openAssignment._id));
+    }
   }
 
   return updatedOrder;

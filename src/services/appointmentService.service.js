@@ -1,7 +1,9 @@
 const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Service = require('../models/Service');
+const CageAssignment = require('../models/CageAssignment');
 const { createOnlineAppointment } = require('./appointmentOrder.service');
+const { releaseCageAssignment } = require('./cageAssignment.service');
 const cloudinary = require('../config/cloudinary');
 
 const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
@@ -488,6 +490,32 @@ async function updateAppointmentServiceStatus({ appointmentServiceId, status }) 
   };
 }
 
+/**
+ * Nhân sự bắt đầu thực hiện dịch vụ (Waiting -> InProgress) và tự động nhả chuồng chờ (BR-10).
+ */
+async function startAppointmentService({ appointmentServiceId }) {
+  const result = await updateAppointmentServiceStatus({
+    appointmentServiceId,
+    status: 'InProgress',
+  });
+
+  const orderId = result.data?.orderId?._id || result.data?.orderId;
+  if (orderId && typeof CageAssignment.findOne === 'function') {
+    const openAssignment = await CageAssignment.findOne({
+      orderId,
+      releasedAt: null,
+    })
+      .select('_id')
+      .lean();
+
+    if (openAssignment) {
+      await releaseCageAssignment(String(openAssignment._id));
+    }
+  }
+
+  return result;
+}
+
 const GROOMING_NOTE_CLOUDINARY_FOLDER = 'grooming-notes';
 
 // Tải 1 ảnh (buffer) lên Cloudinary bằng upload_stream
@@ -630,6 +658,7 @@ module.exports = {
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
   updateAppointmentServiceStatus,
+  startAppointmentService,
   createGroomingNote,
   getGroomingNoteByServiceId,
   getMyGroomingNotes,

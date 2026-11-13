@@ -21,6 +21,7 @@ jest.mock('../../src/models/Pet', () => ({
 
 jest.mock('../../src/models/AppointmentOrder', () => ({
   find: jest.fn(),
+  exists: jest.fn(),
 }));
 
 const cloudinary = require('../../src/config/cloudinary');
@@ -698,5 +699,15 @@ describe('deletePet', () => {
       statusCode: 404,
       message: 'Không tìm thấy thú cưng',
     });
+  });
+
+  it('throws 409 when the pet has an active appointment order', async () => {
+    AppointmentOrder.exists.mockResolvedValue({ _id: 'apt-active' });
+
+    await expect(petService.deletePet(OWNER_ID, PET_ID)).rejects.toMatchObject({
+      statusCode: 409,
+      message: 'Không thể xóa thú cưng đang có lịch hẹn hoặc ca khám chưa hoàn tất',
+    });
+    expect(Pet.findOneAndUpdate).not.toHaveBeenCalled();
   });
 });
