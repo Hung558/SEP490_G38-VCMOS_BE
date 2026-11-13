@@ -2,6 +2,7 @@ const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Service = require('../models/Service');
 const { createOnlineAppointment } = require('./appointmentOrder.service');
+const cloudinary = require('../config/cloudinary');
 
 const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -479,6 +480,140 @@ async function updateAppointmentServiceStatus({ appointmentServiceId, status }) 
   };
 }
 
+const GROOMING_NOTE_CLOUDINARY_FOLDER = 'grooming-notes';
+
+// Tải 1 ảnh (buffer) lên Cloudinary bằng upload_stream
+const uploadImageBuffer = (buffer, folder) =>
+  new Promise((resolve, reject) => {
+    cloudinary.uploader
+      .upload_stream({ folder, resource_type: 'image' }, (err, result) =>
+        err ? reject(err) : resolve(result)
+      )
+      .end(buffer);
+  });
+
+// Xoá ảnh đã tải lên khi các bước sau thất bại; lỗi xoá chỉ bị bỏ qua (best effort)
+const deleteCloudinaryImages = (publicIds) =>
+  Promise.allSettled(
+    publicIds.map((publicId) => cloudinary.uploader.destroy(publicId, { resource_type: 'image' }))
+  );
+
+/**
+ * Groomer tạo ghi chú chăm sóc (GroomingNote) cho 1 dịch vụ được phân công.
+ *
+ * Dữ liệu đầu vào được giả định đã qua `validateCreateGroomingNote`.
+ * - Ảnh `beforePhoto` / `afterPhoto` được tải lên Cloudinary; `secure_url` lưu vào
+ *   `beforePhotoUrl` / `afterPhotoUrl`.
+ * - Dùng cập nhật nguyên tử với điều kiện `groomingNote: null` để tránh ghi đè khi 2 request
+ *   đến cùng lúc. Nếu ghi DB thất bại, ảnh vừa tải lên sẽ bị xoá khỏi Cloudinary.
+ *
+ * @param {Object} payload
+ * @param {string} payload.appointmentServiceId
+ * @param {string} payload.groomerId
+ * @param {Object} payload.note - { beforeNote?, afterNote?, recommendations? }
+ * @param {Object} [payload.photos] - { beforePhoto?: multerFile, afterPhoto?: multerFile }
+ * @returns {Promise<{ message: string, data: AppointmentService }>}
+ * @throws {Error} 409 nếu dịch vụ đã có ghi chú; 502 nếu tải ảnh lên Cloudinary thất bại
+ */
+async function createGroomingNote({ appointmentServiceId, groomerId, note, photos = {} }) {
+  const noteData = { ...note };
+  const uploadedPublicIds = [];
+
+  // 1. Tải ảnh lên Cloudinary (song song)
+  const photoEntries = [
+    ['beforePhoto', 'beforePhotoUrl'],
+    ['afterPhoto', 'afterPhotoUrl'],
+  ].filter(([field]) => photos[field]);
+
+  if (photoEntries.length > 0) {
+    const folder = `${GROOMING_NOTE_CLOUDINARY_FOLDER}/${appointmentServiceId}`;
+    const results = await Promise.allSettled(
+      photoEntries.map(([field]) => uploadImageBuffer(photos[field].buffer, folder))
+    );
+
+    results.forEach((r) => {
+      if (r.status === 'fulfilled') uploadedPublicIds.push(r.value.public_id);
+    });
+
+    if (results.some((r) => r.status === 'rejected')) {
+      await deleteCloudinaryImages(uploadedPublicIds);
+      throw createError('Không thể tải ảnh lên, vui lòng thử lại sau', 502);
+    }
+
+    results.forEach((r, i) => {
+      noteData[photoEntries[i][1]] = r.value.secure_url;
+    });
+  }
+
+  // 2. Ghi ghi chú vào dịch vụ (nguyên tử)
+  let updated;
+  try {
+    updated = await AppointmentService.findOneAndUpdate(
+      { _id: appointmentServiceId, assignedStaffId: groomerId, groomingNote: null },
+      { $set: { groomingNote: { ...noteData, createdAt: new Date() } } },
+      { returnDocument: 'after', runValidators: true }
+    )
+      .populate('serviceId')
+      .populate('orderId')
+      .populate('assignedStaffId', 'code fullName role status')
+      .lean();
+  } catch (err) {
+    await deleteCloudinaryImages(uploadedPublicIds);
+    throw err;
+  }
+
+  if (!updated) {
+    await deleteCloudinaryImages(uploadedPublicIds);
+    throw createError('Dịch vụ này đã có ghi chú chăm sóc hoặc không còn được phân công cho bạn', 409);
+  }
+
+  return { message: 'Tạo ghi chú chăm sóc thành công', data: updated };
+}
+
+/**
+ * Groomer xem ghi chú chăm sóc của 1 dịch vụ (quyền sở hữu đã được kiểm tra ở validator).
+ *
+ * @returns {Promise<{ message: string, data: AppointmentService }>}
+ * @throws {Error} 404 nếu dịch vụ chưa có ghi chú
+ */
+async function getGroomingNoteByServiceId({ appointmentServiceId, groomerId }) {
+  const appointmentService = await AppointmentService.findOne({
+    _id: appointmentServiceId,
+    assignedStaffId: groomerId,
+  })
+    .populate('serviceId')
+    .populate('orderId')
+    .populate('assignedStaffId', 'code fullName role status')
+    .lean();
+
+  if (!appointmentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+  if (!appointmentService.groomingNote) {
+    throw createError('Dịch vụ này chưa có ghi chú chăm sóc', 404);
+  }
+
+  return { message: 'Lấy ghi chú chăm sóc thành công', data: appointmentService };
+}
+
+/**
+ * Groomer xem danh sách các dịch vụ đã có ghi chú chăm sóc của chính mình (mới nhất trước).
+ *
+ * @returns {Promise<{ message: string, data: AppointmentService[] }>}
+ */
+async function getMyGroomingNotes({ groomerId }) {
+  const services = await AppointmentService.find({
+    assignedStaffId: groomerId,
+    groomingNote: { $ne: null },
+  })
+    .populate('serviceId')
+    .populate('orderId')
+    .sort({ 'groomingNote.createdAt': -1 })
+    .lean();
+
+  return { message: 'Lấy danh sách ghi chú chăm sóc thành công', data: services };
+}
+
 module.exports = {
   createOnlineAppointmentService,
   createOnlineBooking,
@@ -487,4 +622,7 @@ module.exports = {
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
   updateAppointmentServiceStatus,
+  createGroomingNote,
+  getGroomingNoteByServiceId,
+  getMyGroomingNotes,
 };
