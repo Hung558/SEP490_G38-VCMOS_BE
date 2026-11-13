@@ -1,5 +1,6 @@
 const express = require('express');
 const { protect, authorize } = require('../middlewares/auth.middleware');
+const { uploadGroomingNotePhotos } = require('../middlewares/upload.middleware');
 const {
   createOnlineAppointmentServiceController,
   createOnlineBookingController,
@@ -8,6 +9,10 @@ const {
   getAppointmentServicesByAssignedStaffIdController,
   cancelAppointmentServiceController,
   startAppointmentServiceController,
+  completeAppointmentServiceController,
+  createGroomingNoteController,
+  getMyGroomingNotesController,
+  getGroomingNoteByServiceIdController,
 } = require('../controllers/appointmentService.controller');
 
 const router = express.Router();
@@ -28,7 +33,24 @@ router.get('/my-queue', protect, authorize('Veterinarian', 'Groomer'), getAppoin
 // Bác sĩ / Groomer bắt đầu thực hiện 1 dịch vụ trong lịch hẹn (status -> InProgress)
 router.patch('/:id/start', protect, authorize('Veterinarian', 'Groomer'), startAppointmentServiceController);
 
+// Groomer hoàn thành 1 dịch vụ được phân công cho mình (status -> Done)
+router.patch('/:id/complete', protect, authorize('Groomer'), completeAppointmentServiceController);
+
 // PetOwner / Lễ tân hủy 1 dịch vụ lẻ trong lịch hẹn (UC-18, BR-07)
 router.patch('/:id/cancel', protect, authorize('PetOwner', 'Receptionist'), cancelAppointmentServiceController);
+
+// Groomer xem danh sách ghi chú chăm sóc của chính mình
+router.get('/my-grooming-notes', protect, authorize('Groomer'), getMyGroomingNotesController);
+
+// Groomer tạo / xem ghi chú chăm sóc của 1 dịch vụ được phân công cho mình
+// multipart/form-data: beforeNote, afterNote, recommendations + file beforePhoto, afterPhoto (Cloudinary)
+router.post(
+  '/:id/grooming-note',
+  protect,
+  authorize('Groomer'),
+  uploadGroomingNotePhotos,
+  createGroomingNoteController
+);
+router.get('/:id/grooming-note', protect, authorize('Groomer'), getGroomingNoteByServiceIdController);
 
 module.exports = router;

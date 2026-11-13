@@ -436,6 +436,176 @@ async function validateUpdateAppointmentServiceStatus(appointmentServiceId, payl
   return { appointmentServiceId, status };
 }
 
+// ---------------------------------------------------------------------------
+// Grooming note (ghi chú chăm sóc) - Groomer
+// ---------------------------------------------------------------------------
+const GROOMING_NOTE_ALLOWED_SERVICE_STATUSES = ['InProgress', 'Done'];
+const GROOMING_NOTE_TEXT_FIELDS = ['beforeNote', 'afterNote', 'recommendations'];
+const GROOMING_NOTE_PHOTO_FIELDS = ['beforePhoto', 'afterPhoto']; // file upload, URL do Cloudinary trả về
+const GROOMING_NOTE_TEXT_MAX_LENGTH = 1000;
+
+/**
+ * Tìm dịch vụ lịch hẹn và đảm bảo nó được phân công cho đúng Groomer đang đăng nhập (chống IDOR).
+ */
+async function loadServiceAssignedToGroomer(appointmentServiceId, groomerId) {
+  const appointmentService = await AppointmentService.findById(appointmentServiceId)
+    .select('assignedStaffId status groomingNote')
+    .lean();
+  if (!appointmentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+  if (String(appointmentService.assignedStaffId) !== String(groomerId)) {
+    throw createError('Bạn chỉ có thể thao tác trên dịch vụ được phân công cho mình', 403);
+  }
+  return appointmentService;
+}
+
+/**
+ * Kiểm tra dữ liệu khi Groomer hoàn thành (status -> 'Done') 1 dịch vụ trong lịch hẹn.
+ *
+ * Quy tắc:
+ * - Dịch vụ phải được phân công cho chính Groomer đang đăng nhập (chống IDOR).
+ * - Dịch vụ phải đang 'InProgress' (không thể nhảy từ Booked/Waiting sang Done).
+ * - Lịch hẹn cha chưa kết thúc (Done / Cancelled / Overdue) - kiểm tra lại bằng
+ *   validateUpdateAppointmentServiceStatus.
+ *
+ * @param {string} appointmentServiceId - ID của AppointmentService trên params
+ * @param {string} groomerId - Id Groomer đang đăng nhập (lấy từ token)
+ * @returns {Promise<{ appointmentServiceId: string, status: 'Done' }>}
+ * @throws {Error} lỗi với `statusCode` 400 | 403 | 404 | 409 và thông báo tiếng Việt
+ */
+async function validateCompleteAppointmentService(appointmentServiceId, groomerId) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+  if (!groomerId || !isValidObjectId(groomerId)) {
+    throw createError('groomerId không hợp lệ');
+  }
+
+  const appointmentService = await loadServiceAssignedToGroomer(appointmentServiceId, groomerId);
+
+  if (appointmentService.status !== 'InProgress') {
+    throw createError(
+      `Chỉ có thể hoàn thành dịch vụ đang thực hiện (InProgress), hiện tại: "${appointmentService.status}"`,
+      409
+    );
+  }
+
+  return validateUpdateAppointmentServiceStatus(appointmentServiceId, { status: 'Done' });
+}
+
+/**
+ * Kiểm tra dữ liệu khi Groomer tạo ghi chú chăm sóc (GroomingNote) cho 1 dịch vụ.
+ *
+ * Request là JSON hoặc multipart/form-data:
+ * - Text (body): beforeNote, afterNote, recommendations
+ * - Ảnh (file, do multer xử lý): beforePhoto, afterPhoto -> service tải lên Cloudinary và lưu URL
+ *   vào beforePhotoUrl / afterPhotoUrl. URL ảnh không được truyền trực tiếp qua body.
+ *
+ * Quy tắc:
+ * - Phải có ít nhất 1 trường text có nội dung hoặc 1 ảnh.
+ * - Dịch vụ phải được phân công cho chính Groomer, đang 'InProgress' hoặc 'Done'.
+ * - Mỗi dịch vụ chỉ có 1 ghi chú.
+ * - Toàn bộ kiểm tra diễn ra TRƯỚC khi tải ảnh lên để không sinh ảnh mồ côi trên Cloudinary.
+ *
+ * @param {string} appointmentServiceId - ID của AppointmentService trên params
+ * @param {string} groomerId - Id Groomer đang đăng nhập (lấy từ token)
+ * @param {Object} payload - req.body
+ * @param {Object} [files] - req.files từ multer: { beforePhoto?: [file], afterPhoto?: [file] }
+ * @returns {Promise<{ appointmentServiceId: string, groomerId: string, note: Object, photos: Object }>}
+ * @throws {Error} lỗi với `statusCode` 400 | 403 | 404 | 409 và thông báo tiếng Việt
+ */
+async function validateCreateGroomingNote(appointmentServiceId, groomerId, payload, files) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+  if (!groomerId || !isValidObjectId(groomerId)) {
+    throw createError('groomerId không hợp lệ');
+  }
+
+  const data = payload === undefined || payload === null ? {} : payload;
+  if (typeof data !== 'object' || Array.isArray(data)) {
+    throw createError('Dữ liệu ghi chú không hợp lệ');
+  }
+
+  // 1. Chỉ cho phép các trường text của ghi chú (ảnh đi qua file, không qua body)
+  const unknown = Object.keys(data).filter((field) => !GROOMING_NOTE_TEXT_FIELDS.includes(field));
+  if (unknown.length > 0) {
+    throw createError(`Không được truyền các trường: ${unknown.join(', ')}`);
+  }
+
+  // 2. Kiểm tra định dạng các trường text (bỏ qua trường rỗng)
+  const note = {};
+  GROOMING_NOTE_TEXT_FIELDS.forEach((field) => {
+    const value = data[field];
+    if (value === undefined || value === null) return;
+    if (typeof value !== 'string') throw createError(`${field} phải là chuỗi`);
+    const clean = value.trim();
+    if (!clean) return;
+    if (clean.length > GROOMING_NOTE_TEXT_MAX_LENGTH) {
+      throw createError(`${field} tối đa ${GROOMING_NOTE_TEXT_MAX_LENGTH} ký tự`);
+    }
+    note[field] = clean;
+  });
+
+  // 3. Lấy file ảnh (định dạng / dung lượng đã được middleware upload kiểm tra)
+  const photos = {};
+  GROOMING_NOTE_PHOTO_FIELDS.forEach((field) => {
+    const file = files && files[field] && files[field][0];
+    if (file && file.buffer && file.buffer.length > 0) photos[field] = file;
+  });
+
+  if (Object.keys(note).length === 0 && Object.keys(photos).length === 0) {
+    throw createError('Vui lòng nhập ít nhất một ghi chú hoặc tải lên ít nhất một ảnh');
+  }
+
+  // 4. Kiểm tra dịch vụ: đúng người được phân công, đúng trạng thái, chưa có ghi chú
+  const appointmentService = await loadServiceAssignedToGroomer(appointmentServiceId, groomerId);
+
+  if (!GROOMING_NOTE_ALLOWED_SERVICE_STATUSES.includes(appointmentService.status)) {
+    throw createError(
+      `Chỉ có thể tạo ghi chú cho dịch vụ đang thực hiện hoặc đã hoàn thành (hiện tại: "${appointmentService.status}")`,
+      409
+    );
+  }
+  if (appointmentService.groomingNote) {
+    throw createError('Dịch vụ này đã có ghi chú chăm sóc', 409);
+  }
+
+  return { appointmentServiceId, groomerId, note, photos };
+}
+
+/**
+ * Kiểm tra dữ liệu khi Groomer xem ghi chú chăm sóc của 1 dịch vụ (phải là dịch vụ của chính mình).
+ *
+ * @returns {Promise<{ appointmentServiceId: string, groomerId: string }>}
+ * @throws {Error} lỗi với `statusCode` 400 | 403 | 404
+ */
+async function validateGetGroomingNoteByServiceId(appointmentServiceId, groomerId) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+  if (!groomerId || !isValidObjectId(groomerId)) {
+    throw createError('groomerId không hợp lệ');
+  }
+
+  await loadServiceAssignedToGroomer(appointmentServiceId, groomerId);
+
+  return { appointmentServiceId, groomerId };
+}
+
+/**
+ * Kiểm tra dữ liệu khi Groomer xem danh sách ghi chú chăm sóc của chính mình.
+ *
+ * @returns {Promise<{ groomerId: string }>}
+ */
+async function validateGetMyGroomingNotes({ groomerId } = {}) {
+  if (!groomerId || !isValidObjectId(groomerId)) {
+    throw createError('groomerId không hợp lệ');
+  }
+  return { groomerId };
+}
+
 module.exports = {
   validateCreateOnlineAppointmentService,
   validateCreateOnlineBooking,
@@ -444,4 +614,8 @@ module.exports = {
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
   validateUpdateAppointmentServiceStatus,
+  validateCompleteAppointmentService,
+  validateCreateGroomingNote,
+  validateGetGroomingNoteByServiceId,
+  validateGetMyGroomingNotes,
 };

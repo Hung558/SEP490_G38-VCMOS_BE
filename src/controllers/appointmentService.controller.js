@@ -6,6 +6,9 @@ const {
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
   updateAppointmentServiceStatus,
+  createGroomingNote,
+  getGroomingNoteByServiceId,
+  getMyGroomingNotes,
 } = require('../services/appointmentService.service');
 const {
   validateCreateOnlineAppointmentService,
@@ -15,6 +18,10 @@ const {
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
   validateUpdateAppointmentServiceStatus,
+  validateCompleteAppointmentService,
+  validateCreateGroomingNote,
+  validateGetGroomingNoteByServiceId,
+  validateGetMyGroomingNotes,
 } = require('../validators/appointmentService.validator');
 
 const handleError = (res, err) => {
@@ -144,6 +151,72 @@ async function startAppointmentServiceController(req, res) {
   }
 }
 
+/**
+ * PATCH /appointment-services/:id/complete
+ * Không cần body: status luôn được đặt thành 'Done'.
+ * Groomer hoàn thành 1 dịch vụ được phân công cho chính mình (phải đang 'InProgress')
+ */
+async function completeAppointmentServiceController(req, res) {
+  try {
+    const validated = await validateCompleteAppointmentService(req.params.id, req.user.id);
+    const { message, data } = await updateAppointmentServiceStatus(validated);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+/**
+ * POST /appointment-services/:id/grooming-note
+ * Content-Type: multipart/form-data (hoặc JSON nếu không có ảnh)
+ * Text: beforeNote?, afterNote?, recommendations?
+ * File: beforePhoto?, afterPhoto? (JPEG/PNG/WebP, tối đa 5MB/ảnh) -> lưu trên Cloudinary
+ * Cần ít nhất 1 ghi chú hoặc 1 ảnh.
+ * Groomer tạo ghi chú chăm sóc cho dịch vụ được phân công cho chính mình
+ */
+async function createGroomingNoteController(req, res) {
+  try {
+    const validated = await validateCreateGroomingNote(
+      req.params.id,
+      req.user.id,
+      req.body,
+      req.files // { beforePhoto?, afterPhoto? } do multer gán
+    );
+    const { message, data } = await createGroomingNote(validated);
+    return res.status(201).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+/**
+ * GET /appointment-services/my-grooming-notes
+ * Groomer xem danh sách ghi chú chăm sóc của chính mình
+ */
+async function getMyGroomingNotesController(req, res) {
+  try {
+    const validated = await validateGetMyGroomingNotes({ groomerId: req.user.id });
+    const { message, data } = await getMyGroomingNotes(validated);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+/**
+ * GET /appointment-services/:id/grooming-note
+ * Groomer xem ghi chú chăm sóc của 1 dịch vụ được phân công cho chính mình
+ */
+async function getGroomingNoteByServiceIdController(req, res) {
+  try {
+    const validated = await validateGetGroomingNoteByServiceId(req.params.id, req.user.id);
+    const { message, data } = await getGroomingNoteByServiceId(validated);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
 module.exports = {
   createOnlineAppointmentServiceController,
   createOnlineBookingController,
@@ -152,4 +225,8 @@ module.exports = {
   getAppointmentServicesByAssignedStaffIdController,
   cancelAppointmentServiceController,
   startAppointmentServiceController,
+  completeAppointmentServiceController,
+  createGroomingNoteController,
+  getMyGroomingNotesController,
+  getGroomingNoteByServiceIdController,
 };
