@@ -19,6 +19,7 @@
 8. [Đặt Lịch Hẹn Online & Lễ Tân Check-in (`Appointments` — `/api/appointment-orders` & `/api/appointment-services`)](#8--đặt-lịch-hẹn-online--lễ-tân-check-in-appointments)
 9. [Bác Sĩ & Groomer Nhận Ca, Tra Cứu & Giải Phóng Chuồng (`Work Queue` — `/api/appointment-services/my-queue` & `/api/cage-assignments`)](#9--bác-sĩ--groomer-nhận-ca-tra-cứu--giải-phóng-chuồng-work-queue)
 10. [Bác Sĩ Khám Lâm Sàng, Ghi Bệnh Án Chuẩn SOAP & Kê Đơn Thuốc (`Medical Records` — `/api/medical-records`)](#10--bác-sĩ-khám-lâm-sàng-ghi-bệnh-án-chuẩn-soap--kê-đơn-thuốc-medical-records--apimedical-records)
+11. [Sub-task Cận Lâm Sàng & Dịch Vụ Phụ (`Sub-task Requests` — `/api/subtask-requests`)](#11--sub-task-cận-lâm-sàng--dịch-vụ-phụ-sub-task-requests--apisubtask-requests)
 
 ---
 
@@ -854,4 +855,78 @@
 - **Auth**: 🔒 `Veterinarian`, `Groomer`, `Receptionist`, `Admin`, hoặc đúng `PetOwner` sở hữu thú cưng (**`BR-23`**)
 - **Kết quả mong đợi**:
   - `200 OK`: Trả về `{ pet, records }` (danh sách lịch sử các lần khám trước của thú cưng, sắp xếp từ mới nhất đến cũ nhất để bác sĩ mở **Medical History Drawer** tra cứu nhanh).
+
+---
+
+## 11. 🧪 Sub-task Cận Lâm Sàng & Dịch Vụ Phụ (`Sub-task Requests` — `/api/subtask-requests`)
+
+### 11.1. Bác sĩ chính chỉ định cận lâm sàng / dịch vụ phụ (`POST /api/subtask-requests` — `UC-33`)
+- **Method**: `POST`
+- **URL**: `http://localhost:9999/api/subtask-requests`
+- **Auth**: 🔒 Chỉ `Veterinarian` (đúng bác sĩ đang phụ trách ca khám chính ở trạng thái `InProgress`)
+- **Body (`JSON`)**:
+  ```json
+  {
+    "appointmentServiceId": "<id_AppointmentService_đang_InProgress>",
+    "assignedStaffId": "<id_Veterinarian_hoặc_Groomer_Active>",
+    "taskType": "Xét nghiệm sinh hóa máu",
+    "instructions": "Kiểm tra men gan ALT và ure trước khi kê đơn"
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `201 Created`: Tạo Sub-task trạng thái `Pending`, trả về `{ message, data }` kèm thông tin thú cưng, đơn hẹn (`note`, `intake`) và nhân sự liên quan.
+  - `403 Forbidden`: Không phải bác sĩ được phân công phụ trách ca khám chính.
+  - `409 Conflict`: Ca khám chính chưa ở trạng thái `InProgress` hoặc bệnh án đã khóa `Finalized`.
+
+---
+
+### 11.2. Nhân sự xem hàng đợi Sub-task được giao (`GET /api/subtask-requests/my-queue` — `SCR-24`, `UC-34`)
+- **Method**: `GET`
+- **URL**: `http://localhost:9999/api/subtask-requests/my-queue?status=Pending` *(query `status` tùy chọn: `Pending` | `InProgress` | `Completed`)*
+- **Auth**: 🔒 `Veterinarian`, `Groomer`
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về danh sách các yêu cầu được giao cho chính mình.
+
+---
+
+### 11.3. Xem danh sách Sub-task của 1 ca khám / Xem chi tiết 1 Sub-task
+- **Danh sách theo ca khám**: `GET http://localhost:9999/api/subtask-requests/service/:appointmentServiceId`
+- **Chi tiết 1 yêu cầu**: `GET http://localhost:9999/api/subtask-requests/:id`
+- **Auth**: 🔒 `Veterinarian`, `Groomer`, `Receptionist`, `Admin`, hoặc đúng `PetOwner` sở hữu thú cưng (**`BR-23`**)
+- **Kết quả mong đợi**:
+  - `200 OK`: Trả về `{ message, data }`.
+  - `403 Forbidden`: `PetOwner` xem ca khám của thú cưng không phải của mình (**`BR-23`**).
+
+---
+
+### 11.4. Nhân sự nhận thực hiện Sub-task (`PATCH /api/subtask-requests/:id/start` — `UC-34`)
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/subtask-requests/:id/start`
+- **Auth**: 🔒 `Veterinarian` hoặc `Groomer` (đúng người được phân công `assignedStaffId`)
+- **Kết quả mong đợi**:
+  - `200 OK`: Chuyển trạng thái từ `Pending` → `InProgress`.
+  - `409 Conflict`: Sub-task không còn ở trạng thái `Pending`.
+
+---
+
+### 11.5. Nhân sự trả kết quả & hoàn tất Sub-task (`PATCH /api/subtask-requests/:id/complete` — `UC-34`)
+- **Method**: `PATCH`
+- **URL**: `http://localhost:9999/api/subtask-requests/:id/complete`
+- **Auth**: 🔒 `Veterinarian` hoặc `Groomer` (đúng người được phân công `assignedStaffId`)
+- **Body**: `multipart/form-data` *(nếu gửi kèm ảnh)* hoặc `JSON` *(nếu chỉ gửi chữ)* — bắt buộc có ít nhất `resultText` hoặc file `resultImage` (`JPEG/PNG/WebP`, tối đa 5MB):
+  - `resultText`: `"ALT 42 U/L, Ure bình thường"`
+  - `resultImage`: `<file ảnh kết quả xét nghiệm / X-quang / siêu âm>`
+- **Kết quả mong đợi**:
+  - `200 OK`: Upload ảnh lên Cloudinary (nếu có), lưu `resultText` / `resultImageUrl`, chuyển `status` → `Completed` và gán `completedAt`. Khi toàn bộ Sub-task của ca khám đã `Completed`, bác sĩ chính mới được hoàn tất ca khám chính (**`MSG26`**).
+
+---
+
+### 11.6. Bác sĩ chính hủy Sub-task khi còn `Pending` (`DELETE /api/subtask-requests/:id`)
+- **Method**: `DELETE`
+- **URL**: `http://localhost:9999/api/subtask-requests/:id`
+- **Auth**: 🔒 Chỉ `Veterinarian` đã tạo yêu cầu (`requestedById`)
+- **Kết quả mong đợi**:
+  - `200 OK`: Xóa yêu cầu khi còn ở trạng thái `Pending` (tránh kẹt chốt chặn `MSG26` nếu chỉ định nhầm).
+  - `409 Conflict`: Sub-task đã chuyển sang `InProgress` hoặc `Completed`.
+
 
