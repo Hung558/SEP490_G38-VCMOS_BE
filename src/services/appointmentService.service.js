@@ -420,7 +420,8 @@ async function cancelAppointmentService({ appointmentServiceId, userId, role, re
  *
  * Không kiểm tra quyền hay luật chuyển trạng thái (giả định đã xử lý ở middleware / validator).
  * - Khi chuyển sang 'InProgress': ghi nhận `dequeueAt` (rời hàng đợi); đơn 'CheckedIn' -> 'InProgress'.
- * - Khi tất cả dịch vụ chưa hủy của đơn đều 'Done': đơn chuyển sang 'WaitOwner'.
+ * - Khi chuyển sang 'Done': nếu đơn (đang 'CheckedIn' / 'InProgress') không còn dịch vụ nào chưa hoàn thành
+ *   (mọi dịch vụ đều 'Done' hoặc 'Cancelled') thì đơn chuyển sang 'WaitOwner'.
  *
  * @param {Object} payload
  * @param {string} payload.appointmentServiceId
@@ -465,12 +466,19 @@ async function updateAppointmentServiceStatus({ appointmentServiceId, status }) 
   if (status === 'InProgress' && order.derivedStatus === 'CheckedIn') {
     await AppointmentOrder.findByIdAndUpdate(order._id, { $set: { derivedStatus: 'InProgress' } });
   } else if (status === 'Done' && ['CheckedIn', 'InProgress'].includes(order.derivedStatus)) {
-    const allServices = await AppointmentService.find({ orderId: order._id })
-      .select('status')
-      .lean();
-    const activeServices = allServices.filter((item) => item.status !== 'Cancelled');
-    if (activeServices.length > 0 && activeServices.every((item) => item.status === 'Done')) {
-      await AppointmentOrder.findByIdAndUpdate(order._id, { $set: { derivedStatus: 'WaitOwner' } });
+    // Còn dịch vụ nào trong đơn chưa hoàn thành (không tính 'Done' và 'Cancelled') không?
+    const remainingServices = await AppointmentService.countDocuments({
+      orderId: order._id,
+      status: { $nin: ['Done', 'Cancelled'] },
+    });
+
+    // Không còn dịch vụ nào -> đơn chuyển sang 'WaitOwner' (chờ chủ nuôi nhận thú cưng / thanh toán).
+    // Điều kiện derivedStatus trong filter tránh ghi đè nếu đơn vừa bị đổi trạng thái bởi request khác.
+    if (remainingServices === 0) {
+      await AppointmentOrder.findOneAndUpdate(
+        { _id: order._id, derivedStatus: { $in: ['CheckedIn', 'InProgress'] } },
+        { $set: { derivedStatus: 'WaitOwner' } }
+      );
     }
   }
 
