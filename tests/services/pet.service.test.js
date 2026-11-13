@@ -19,8 +19,13 @@ jest.mock('../../src/models/Pet', () => ({
   findOneAndUpdate: jest.fn(),
 }));
 
+jest.mock('../../src/models/AppointmentOrder', () => ({
+  find: jest.fn(),
+}));
+
 const cloudinary = require('../../src/config/cloudinary');
 const Pet = require('../../src/models/Pet');
+const AppointmentOrder = require('../../src/models/AppointmentOrder');
 const petService = require('../../src/services/pet.service');
 
 /* -------------------------------- helpers -------------------------------- */
@@ -334,6 +339,37 @@ describe('getPetById', () => {
       statusCode: 404,
       message: 'Không tìm thấy thú cưng',
     });
+  });
+});
+
+/* -------------------------- getPetAppointmentNotes ------------------------- */
+
+describe('getPetAppointmentNotes', () => {
+  it('queries non-cancelled appointment notes and intake sorted newest first', async () => {
+    const notes = [
+      {
+        code: 'APT-000002',
+        date: '2026-11-14',
+        note: 'Bé bỏ ăn sáng nay',
+        intake: { symptoms: 'Bỏ ăn, mệt', initialCondition: 'Thân nhiệt 39 độ' },
+      },
+    ];
+    const lean = jest.fn().mockResolvedValue(notes);
+    const sort = jest.fn().mockReturnValue({ lean });
+    const select = jest.fn().mockReturnValue({ sort });
+    AppointmentOrder.find.mockReturnValue({ select });
+
+    const result = await petService.getPetAppointmentNotes(PET_ID);
+
+    expect(AppointmentOrder.find).toHaveBeenCalledWith({
+      petId: PET_ID,
+      derivedStatus: { $ne: 'Cancelled' },
+    });
+    expect(select).toHaveBeenCalledWith(
+      'code date slotStart isOnline derivedStatus note intake checkedInAt createdAt'
+    );
+    expect(sort).toHaveBeenCalledWith({ date: -1, createdAt: -1 });
+    expect(result).toEqual(notes);
   });
 });
 

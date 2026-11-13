@@ -3,6 +3,7 @@ jest.mock('../../src/models/AppointmentService', () => ({
   findById: jest.fn(),
   findByIdAndUpdate: jest.fn(),
   findOne: jest.fn(),
+  countDocuments: jest.fn(),
   create: jest.fn(),
   deleteMany: jest.fn(),
 }));
@@ -11,6 +12,7 @@ jest.mock('../../src/models/AppointmentOrder', () => ({
   deleteOne: jest.fn(),
   findById: jest.fn(),
   findByIdAndUpdate: jest.fn(),
+  findOneAndUpdate: jest.fn(),
 }));
 jest.mock('../../src/models/Service', () => ({
   find: jest.fn(),
@@ -18,6 +20,13 @@ jest.mock('../../src/models/Service', () => ({
 // Không nạp appointmentOrder.service thật (kéo theo nodemailer, Pet, User...)
 jest.mock('../../src/services/appointmentOrder.service', () => ({
   createOnlineAppointment: jest.fn(),
+}));
+// Giả lập Cloudinary để unit test không phụ thuộc biến môi trường .env khi chạy độc lập
+jest.mock('../../src/config/cloudinary', () => ({
+  uploader: {
+    upload_stream: jest.fn(),
+    destroy: jest.fn(),
+  },
 }));
 
 const AppointmentService = require('../../src/models/AppointmentService');
@@ -945,13 +954,6 @@ describe('updateAppointmentServiceStatus', () => {
   };
 
   // Giả lập danh sách trạng thái các dịch vụ trong cùng đơn
-  const mockSiblingStatuses = (...statuses) => {
-    AppointmentService.find.mockReturnValue({
-      select: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue(statuses.map((status) => ({ status }))),
-    });
-  };
-
   beforeEach(() => {
     jest.resetAllMocks();
     mockService({ _id: 'as-1', orderId: 'order-1', status: 'Waiting' });
@@ -1065,31 +1067,27 @@ describe('updateAppointmentServiceStatus', () => {
       'chuyển đơn %s sang WaitOwner khi mọi dịch vụ chưa hủy đều Done',
       async (orderStatus) => {
         mockOrder({ _id: 'order-1', derivedStatus: orderStatus });
-        mockSiblingStatuses('Done', 'Done', 'Cancelled');
+        AppointmentService.countDocuments.mockResolvedValue(0);
 
         await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
 
-        expect(AppointmentService.find).toHaveBeenCalledWith({ orderId: 'order-1' });
-        expect(AppointmentOrder.findByIdAndUpdate).toHaveBeenCalledWith('order-1', {
-          $set: { derivedStatus: 'WaitOwner' },
+        expect(AppointmentService.countDocuments).toHaveBeenCalledWith({
+          orderId: 'order-1',
+          status: { $nin: ['Done', 'Cancelled'] },
         });
+        expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledWith(
+          { _id: 'order-1', derivedStatus: { $in: ['CheckedIn', 'InProgress'] } },
+          { $set: { derivedStatus: 'WaitOwner' } }
+        );
       }
     );
 
     it('giữ nguyên đơn khi vẫn còn dịch vụ chưa Done', async () => {
-      mockSiblingStatuses('Done', 'InProgress');
+      AppointmentService.countDocuments.mockResolvedValue(1);
 
       await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
 
-      expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
-    });
-
-    it('giữ nguyên đơn khi không còn dịch vụ nào chưa hủy', async () => {
-      mockSiblingStatuses('Cancelled');
-
-      await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
-
-      expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(AppointmentOrder.findOneAndUpdate).not.toHaveBeenCalled();
     });
 
     it('không truy vấn các dịch vụ khác và không đổi đơn khi đơn đang ở trạng thái Booked', async () => {
@@ -1097,8 +1095,8 @@ describe('updateAppointmentServiceStatus', () => {
 
       await updateAppointmentServiceStatus({ appointmentServiceId: 'as-1', status: 'Done' });
 
-      expect(AppointmentService.find).not.toHaveBeenCalled();
-      expect(AppointmentOrder.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(AppointmentService.countDocuments).not.toHaveBeenCalled();
+      expect(AppointmentOrder.findOneAndUpdate).not.toHaveBeenCalled();
     });
   });
 

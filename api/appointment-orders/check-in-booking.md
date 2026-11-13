@@ -29,19 +29,29 @@ Optional JSON body. Receptionist can optionally assign an available holding cage
 
 | Field | Type | Required | Description |
 |---|---|---|---|
+| `intake` | object | Conditional | Receptionist initial check-in assessment (`{ symptoms, initialCondition }`). When sent, both `symptoms` and `initialCondition` must be non-empty strings (max 500 characters each). Kept optional on omit while FE rollout flag is off. |
 | `cageId` | string | No | The `_id` of an available cage to assign. Must match pet weight according to BR-11 (S: $\le$5kg, M: 5–15kg, L: 15–30kg, XL: >30kg). |
 | `requiresIsolation` | boolean | No | Set to `true` if pet is suspected of contagious diseases (requires an `isIsolated = true` cage). Defaults to `false`. |
 
-**Example 1: Check-in without cage assignment (customer holds pet in waiting area)**
-```json
-{}
-```
-
-**Example 2: Check-in with cage assignment**
+**Example 1: Check-in with initial assessment (`intake`)**
 ```json
 {
+  "intake": {
+    "symptoms": "Bé bỏ ăn 1 ngày, ho nhẹ vào buổi sáng",
+    "initialCondition": "Tỉnh táo, hơi mệt, không sốt"
+  }
+}
+```
+
+**Example 2: Check-in with initial assessment and cage assignment**
+```json
+{
+  "intake": {
+    "symptoms": "Nôn 2 lần, tiêu chảy nhẹ",
+    "initialCondition": "Mệt nhẹ, cần theo dõi cách ly"
+  },
   "cageId": "6ad96d4a9664da6b2c0d8d70",
-  "requiresIsolation": false
+  "requiresIsolation": true
 }
 ```
 
@@ -65,6 +75,12 @@ Content-Type: application/json
     "ownerId": "6ad96d4a9664da6b2c0d8d61",
     "date": "2026-11-05",
     "note": "Khám tổng quát",
+    "intake": {
+      "symptoms": "Bé bỏ ăn 1 ngày, ho nhẹ vào buổi sáng",
+      "initialCondition": "Tỉnh táo, hơi mệt, không sốt",
+      "recordedBy": "6ad96d4a9664da6b2c0d8d60",
+      "recordedAt": "2026-11-05T02:30:00.000Z"
+    },
     "isOnline": true,
     "derivedStatus": "CheckedIn",
     "checkedInAt": "2026-11-05T02:30:00.000Z",

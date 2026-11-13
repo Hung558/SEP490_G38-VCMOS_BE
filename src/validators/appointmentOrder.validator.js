@@ -4,6 +4,7 @@
 
 const STATUSES = ['Booked', 'CheckedIn', 'InProgress', 'WaitOwner', 'Done', 'Cancelled', 'Overdue'];
 const NOTE_MAX_LENGTH = 500;
+const INTAKE_FIELD_MAX_LENGTH = 500;
 const CANCEL_REASON_MAX_LENGTH = 200;
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 10;
@@ -243,10 +244,106 @@ const validateCancelAppointment = (body = {}) => {
   return { errors, value: { reason: cleanReason } };
 };
 
+/**
+ * Kiểm tra và làm sạch phiếu kê khai ban đầu của lễ tân (intake: { symptoms, initialCondition }).
+ * Dùng chung cho cả check-in lịch hẹn online và tiếp nhận walk-in tại quầy.
+ */
+const validateIntakePayload = (rawIntake) => {
+  const fieldErrors = {};
+
+  if (!rawIntake || typeof rawIntake !== 'object' || Array.isArray(rawIntake)) {
+    fieldErrors.intake = 'Phiếu kê khai ban đầu (intake) phải là một đối tượng hợp lệ';
+    return { fieldErrors, value: undefined };
+  }
+
+  const cleanSymptoms =
+    typeof rawIntake.symptoms === 'string' ? rawIntake.symptoms.trim() : '';
+  const cleanInitialCondition =
+    typeof rawIntake.initialCondition === 'string' ? rawIntake.initialCondition.trim() : '';
+
+  if (typeof rawIntake.symptoms !== 'string' || !cleanSymptoms) {
+    fieldErrors.symptoms = 'Vui lòng nhập triệu chứng ban đầu';
+  } else if (cleanSymptoms.length > INTAKE_FIELD_MAX_LENGTH) {
+    fieldErrors.symptoms = `Triệu chứng ban đầu tối đa ${INTAKE_FIELD_MAX_LENGTH} ký tự`;
+  }
+
+  if (typeof rawIntake.initialCondition !== 'string' || !cleanInitialCondition) {
+    fieldErrors.initialCondition = 'Vui lòng nhập tình trạng lúc đến';
+  } else if (cleanInitialCondition.length > INTAKE_FIELD_MAX_LENGTH) {
+    fieldErrors.initialCondition = `Tình trạng lúc đến tối đa ${INTAKE_FIELD_MAX_LENGTH} ký tự`;
+  }
+
+  if (Object.keys(fieldErrors).length > 0) {
+    return { fieldErrors, value: undefined };
+  }
+
+  return {
+    fieldErrors: {},
+    value: {
+      symptoms: cleanSymptoms,
+      initialCondition: cleanInitialCondition,
+    },
+  };
+};
+
+// Kiểm tra dữ liệu lễ tân gửi khi Check-in (cageId, requiresIsolation, và phiếu kê khai ban đầu intake)
+const validateCheckInAppointment = (body = {}) => {
+  const errors = [];
+  const data = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const { cageId, requiresIsolation, intake } = data;
+
+  let cleanCageId;
+  if (!isBlank(cageId)) {
+    if (!isMongoId(String(cageId))) {
+      errors.push({ field: 'cageId', message: 'cageId không hợp lệ' });
+    } else {
+      cleanCageId = String(cageId);
+    }
+  }
+
+  let cleanRequiresIsolation = false;
+  if (requiresIsolation !== undefined && requiresIsolation !== null) {
+    if (typeof requiresIsolation !== 'boolean') {
+      errors.push({ field: 'requiresIsolation', message: 'requiresIsolation phải là true hoặc false' });
+    } else {
+      cleanRequiresIsolation = requiresIsolation;
+    }
+  }
+
+  let cleanIntake;
+  if (intake !== undefined) {
+    const intakeResult = validateIntakePayload(intake);
+    if (intakeResult.fieldErrors.intake) {
+      errors.push({ field: 'intake', message: intakeResult.fieldErrors.intake });
+    }
+    if (intakeResult.fieldErrors.symptoms) {
+      errors.push({ field: 'intake.symptoms', message: intakeResult.fieldErrors.symptoms });
+    }
+    if (intakeResult.fieldErrors.initialCondition) {
+      errors.push({
+        field: 'intake.initialCondition',
+        message: intakeResult.fieldErrors.initialCondition,
+      });
+    }
+    cleanIntake = intakeResult.value;
+  }
+
+  return {
+    errors,
+    value: {
+      cageId: cleanCageId,
+      requiresIsolation: cleanRequiresIsolation,
+      intake: cleanIntake,
+    },
+  };
+};
+
 module.exports = {
   validateCreateOnlineAppointment,
   validateListOnlineAppointments,
   validateListAllAppointments,
   validateAppointmentId,
   validateCancelAppointment,
+  validateCheckInAppointment,
+  validateIntakePayload,
 };

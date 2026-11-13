@@ -5,6 +5,7 @@ const {
   validateListAllAppointments,
   validateAppointmentId,
   validateCancelAppointment,
+  validateCheckInAppointment,
 } = require('../validators/appointmentOrder.validator');
 
 const handleError = (res, err) => {
@@ -68,19 +69,18 @@ const listAllBooking = async (req, res) => {
 };
 
 const checkInBooking = async (req, res) => {
-  const { errors, value: id } = validateAppointmentId(req.params);
-  if (errors.length) return sendValidationError(res, errors);
+  const { errors: idErrors, value: id } = validateAppointmentId(req.params);
+  if (idErrors.length) return sendValidationError(res, idErrors);
 
-  const cageId = req.body?.cageId;
-  if (cageId !== undefined && cageId !== null && cageId !== '' && !/^[0-9a-fA-F]{24}$/.test(String(cageId))) {
-    return sendValidationError(res, [{ field: 'cageId', message: 'cageId không hợp lệ' }]);
-  }
+  const { errors: bodyErrors, value } = validateCheckInAppointment(req.body);
+  if (bodyErrors.length) return sendValidationError(res, bodyErrors);
 
   try {
     const appointment = await appointmentService.checkInAppointment(id, {
-      cageId: cageId || undefined,
+      cageId: value.cageId,
       staffId: req.user?.id,
-      requiresIsolation: req.body?.requiresIsolation,
+      requiresIsolation: value.requiresIsolation,
+      intake: value.intake,
     });
 
     return res.json({ message: 'Check-in thành công', data: appointment });

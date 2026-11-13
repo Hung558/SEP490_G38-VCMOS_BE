@@ -20,7 +20,7 @@ const DEFAULT_ONLY_FIELDS = [
 ];
 
 // Các trường của lịch hẹn không được truyền vào khi đặt lịch (dùng giá trị mặc định / sinh tự động)
-const BOOKING_ORDER_DEFAULT_ONLY_FIELDS = ['code', 'isOnline', 'derivedStatus', 'checkedInAt', 'slotEnd'];
+const BOOKING_ORDER_DEFAULT_ONLY_FIELDS = ['code', 'isOnline', 'derivedStatus', 'checkedInAt', 'slotEnd', 'intake'];
 
 // Mỗi dịch vụ trong lịch đặt: ngoài các trường mặc định, orderId và giờ dự kiến cũng không được truyền (BE tự tính từ slotStart + defaultDuration)
 const BOOKING_SERVICE_DEFAULT_ONLY_FIELDS = [...DEFAULT_ONLY_FIELDS, 'orderId', 'scheduledStart', 'scheduledEnd'];

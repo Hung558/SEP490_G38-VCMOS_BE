@@ -1,5 +1,16 @@
 const mongoose = require('mongoose');
 
+// Phiếu kê khai / thăm khám ban đầu do lễ tân ghi nhận khi check-in hoặc tiếp nhận walk-in
+const intakeSchema = new mongoose.Schema(
+  {
+    symptoms: { type: String, trim: true, default: '' },
+    initialCondition: { type: String, trim: true, default: '' },
+    recordedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    recordedAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
 const appointmentOrderSchema = new mongoose.Schema(
   {
     code: { type: String, required: true, unique: true, trim: true, uppercase: true },
@@ -9,6 +20,7 @@ const appointmentOrderSchema = new mongoose.Schema(
     slotStart: { type: String, default: null },
     slotEnd: { type: String, default: null },
     note: String,
+    intake: { type: intakeSchema, default: null },
     isOnline: { type: Boolean, default: false },
     derivedStatus: {
       type: String,

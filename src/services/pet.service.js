@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const cloudinary = require('../config/cloudinary');
 const Pet = require('../models/Pet');
+const AppointmentOrder = require('../models/AppointmentOrder');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
 const CODE_LENGTH = 6;
@@ -118,6 +119,20 @@ const getPetById = async (ownerId, petId, role = 'PetOwner') => {
 };
 
 /**
+ * Lấy lịch sử ghi chú đặt lịch (note) và phiếu kê khai ban đầu (intake) của thú cưng
+ * từ các đơn khám chưa bị hủy, sắp xếp mới nhất trước để bác sĩ/lễ tân theo dõi trên hồ sơ thú cưng.
+ */
+const getPetAppointmentNotes = async (petId) => {
+  return AppointmentOrder.find({
+    petId,
+    derivedStatus: { $ne: 'Cancelled' },
+  })
+    .select('code date slotStart isOnline derivedStatus note intake checkedInAt createdAt')
+    .sort({ date: -1, createdAt: -1 })
+    .lean();
+};
+
+/**
  * List the owner's pets, newest first, with pagination.
  * @param {string} ownerId
  * @param {object} [options]
@@ -188,6 +203,7 @@ const deletePet = async (ownerId, petId) => {
 module.exports = {
   createPet,
   getPetById,
+  getPetAppointmentNotes,
   listPets,
   updatePet,
   deletePet,

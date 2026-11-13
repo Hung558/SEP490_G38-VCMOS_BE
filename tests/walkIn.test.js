@@ -400,4 +400,48 @@ describe('Walk-in Customer Reception & BR-04 Activation (/api/appointment-orders
       expect(duplicateReg.status).toBe(409);
     });
   });
+
+  describe('Walk-in với phiếu kê khai ban đầu (intake)', () => {
+    test('Trả 400 nếu truyền intake thiếu triệu chứng hoặc tình trạng lúc đến', async () => {
+      const res = await request(app)
+        .post('/api/appointment-orders/walk-in')
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({
+          phone: '0988777666',
+          fullName: 'Khách Walkin Intake Lỗi',
+          petInfo: { name: 'Bông', species: 'Mèo' },
+          intake: { symptoms: '   ', initialCondition: 'Tỉnh táo' },
+          services: [{ serviceId: medicalService._id }],
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errors['intake.symptoms']).toMatch(/triệu chứng/i);
+    });
+
+    test('Lưu note và intake hợp lệ khi tiếp nhận khách vãng lai tại quầy', async () => {
+      const res = await request(app)
+        .post('/api/appointment-orders/walk-in')
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({
+          phone: '0988777666',
+          fullName: 'Khách Walkin Intake Đủ',
+          petInfo: { name: 'Bông', species: 'Mèo' },
+          note: '  Khách báo bé bỏ ăn 1 ngày  ',
+          intake: {
+            symptoms: '  Bỏ ăn, hơi sốt  ',
+            initialCondition: '  Lờ đờ nhẹ, thân nhiệt 39.2 độ  ',
+          },
+          services: [{ serviceId: medicalService._id, assignedStaffId: vetUser._id }],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.appointment.note).toBe('Khách báo bé bỏ ăn 1 ngày');
+      expect(res.body.data.appointment.intake).toMatchObject({
+        symptoms: 'Bỏ ăn, hơi sốt',
+        initialCondition: 'Lờ đờ nhẹ, thân nhiệt 39.2 độ',
+      });
+      expect(res.body.data.appointment.intake.recordedBy).toBeTruthy();
+      expect(res.body.data.appointment.intake.recordedAt).toBeTruthy();
+    });
+  });
 });

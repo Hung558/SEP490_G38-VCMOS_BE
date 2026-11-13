@@ -277,9 +277,22 @@ const listAllAppointments = async ({
  * Also transitions assigned services from 'Booked' to 'Waiting' and optionally assigns a holding cage (UC-22, BR-09, BR-11).
  */
 const checkInAppointment = async (id, options = {}) => {
+  const checkedInAt = new Date();
+  const updateFields = { derivedStatus: 'CheckedIn', checkedInAt };
+
+  // Chỉ ghi nhận phiếu kê khai ban đầu khi lễ tân truyền intake (tương thích ngược với các luồng cũ)
+  if (options && options.intake) {
+    updateFields.intake = {
+      symptoms: options.intake.symptoms,
+      initialCondition: options.intake.initialCondition,
+      recordedBy: options.staffId || null,
+      recordedAt: checkedInAt,
+    };
+  }
+
   const appointment = await AppointmentOrder.findOneAndUpdate(
     { _id: id, derivedStatus: 'Booked' },
-    { $set: { derivedStatus: 'CheckedIn', checkedInAt: new Date() } },
+    { $set: updateFields },
     { new: true }
   ).lean();
 
