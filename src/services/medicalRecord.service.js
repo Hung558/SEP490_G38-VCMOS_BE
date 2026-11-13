@@ -89,6 +89,42 @@ const loadAndVerifyAssignedService = async (staffId, appointmentServiceId) => {
 };
 
 /**
+ * BR-12: Kiểm tra mọi dịch vụ đứng trước (sequenceNo nhỏ hơn) trong cùng đơn phải đã Done hoặc Cancelled.
+ */
+const ensurePreviousServicesFinished = async (orderId, sequenceNo) => {
+  if (typeof sequenceNo !== 'number') return;
+
+  const unfinishedPreviousService = await AppointmentService.findOne({
+    orderId,
+    sequenceNo: { $lt: sequenceNo },
+    status: { $nin: ['Done', 'Cancelled'] },
+  })
+    .populate('serviceId', 'name')
+    .lean();
+
+  if (unfinishedPreviousService) {
+    const prevName = unfinishedPreviousService.serviceId?.name || `#${unfinishedPreviousService.sequenceNo}`;
+    throw httpError(
+      409,
+      `Không thể bắt đầu: Dịch vụ đứng trước "${prevName}" (thứ tự #${unfinishedPreviousService.sequenceNo}) chưa hoàn thành`
+    );
+  }
+};
+
+/**
+ * BR-10: Tự động giải phóng chuồng chờ đang mở của đơn hẹn (nếu có).
+ */
+const releaseOpenCageForOrder = async (orderId) => {
+  const openAssignment = await CageAssignment.findOne({
+    orderId,
+    releasedAt: null,
+  }).lean();
+
+  if (!openAssignment) return null;
+  return releaseCageAssignment(String(openAssignment._id));
+};
+
+/**
  * 1. Bác sĩ bắt đầu ca khám (POST /api/medical-records/service/:appointmentServiceId/start)
  * - Kiểm tra thứ tự dịch vụ sequenceNo theo BR-12 (dịch vụ trước phải hoàn thành mới được làm dịch vụ sau).
  * - Tự động giải phóng chuồng chờ của đơn hẹn (nếu có) theo BR-10.
@@ -114,32 +150,10 @@ const startMedicalConsultation = async (staffId, appointmentServiceId) => {
   }
 
   // BR-12: Kiểm tra trong cùng đơn hẹn có dịch vụ nào đứng trước (sequenceNo nhỏ hơn) mà chưa hoàn thành không
-  const unfinishedPreviousService = await AppointmentService.findOne({
-    orderId: order._id,
-    sequenceNo: { $lt: appointmentService.sequenceNo },
-    status: { $nin: ['Done', 'Cancelled'] },
-  })
-    .populate('serviceId', 'name')
-    .lean();
-
-  if (unfinishedPreviousService) {
-    const prevName = unfinishedPreviousService.serviceId?.name || `#${unfinishedPreviousService.sequenceNo}`;
-    throw httpError(
-      409,
-      `Không thể bắt đầu: Dịch vụ đứng trước "${prevName}" (thứ tự #${unfinishedPreviousService.sequenceNo}) chưa hoàn thành`
-    );
-  }
+  await ensurePreviousServicesFinished(order._id, appointmentService.sequenceNo);
 
   // BR-10: Tự động giải phóng chuồng chờ (nếu thú cưng đang nằm trong chuồng chờ lúc đợi khám)
-  let releasedCageAssignment = null;
-  const openAssignment = await CageAssignment.findOne({
-    orderId: order._id,
-    releasedAt: null,
-  }).lean();
-
-  if (openAssignment) {
-    releasedCageAssignment = await releaseCageAssignment(String(openAssignment._id));
-  }
+  const releasedCageAssignment = await releaseOpenCageForOrder(order._id);
 
   // Chuyển dịch vụ sang InProgress và ghi nhận thời điểm bắt đầu khám (dequeueAt)
   const updatedService = await AppointmentService.findByIdAndUpdate(
@@ -191,11 +205,20 @@ const saveDraftMedicalRecord = async (staffId, appointmentServiceId, payload) =>
     appointmentServiceId
   );
 
+  if (appointmentService.status === 'Booked') {
+    throw httpError(409, 'Khách hàng chưa thực hiện Check-in tại quầy lễ tân');
+  }
+
   if (['Cancelled', 'Overdue'].includes(appointmentService.status)) {
     throw httpError(
       409,
       `Không thể ghi bệnh án cho dịch vụ đang ở trạng thái "${appointmentService.status}"`
     );
+  }
+
+  // Nếu đi thẳng vào lưu nháp từ Waiting thì vẫn phải kiểm tra thứ tự dịch vụ (BR-12)
+  if (appointmentService.status === 'Waiting') {
+    await ensurePreviousServicesFinished(order._id, appointmentService.sequenceNo);
   }
 
   const existingRecord = await MedicalRecord.findOne({ appointmentServiceId });
@@ -216,8 +239,9 @@ const saveDraftMedicalRecord = async (staffId, appointmentServiceId, payload) =>
     });
   }
 
-  // Nếu dịch vụ đang ở Waiting mà bác sĩ lưu nháp luôn thì tự động chuyển sang InProgress
+  // Nếu dịch vụ đang ở Waiting mà bác sĩ lưu nháp luôn thì nhả chuồng chờ (BR-10) và chuyển sang InProgress
   if (appointmentService.status === 'Waiting') {
+    await releaseOpenCageForOrder(order._id);
     await AppointmentService.findByIdAndUpdate(appointmentServiceId, {
       $set: { status: 'InProgress', dequeueAt: new Date() },
     });
@@ -273,6 +297,11 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
       409,
       `Không thể hoàn tất ca khám đang ở trạng thái "${appointmentService.status}"`
     );
+  }
+
+  // Nếu đi thẳng vào hoàn tất từ Waiting thì vẫn phải kiểm tra thứ tự dịch vụ trước (BR-12)
+  if (appointmentService.status === 'Waiting') {
+    await ensurePreviousServicesFinished(order._id, appointmentService.sequenceNo);
   }
 
   // MSG26 (PB-10): Chặn hoàn tất ca khám chính khi vẫn còn Sub-task cận lâm sàng chưa Completed
@@ -342,6 +371,11 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
   } else if (payload.waitingCageId) {
     const petDoc = await Pet.findById(order.petId).select('weight').lean();
     latestPetWeight = petDoc?.weight;
+  }
+
+  // Nếu bỏ qua bước /start để hoàn tất trực tiếp từ Waiting -> nhả chuồng chờ (BR-10) trước khi xếp chuồng chờ đón
+  if (appointmentService.status === 'Waiting') {
+    await releaseOpenCageForOrder(order._id);
   }
 
   // BR-10 & BR-11: Nếu bác sĩ chọn chuồng chờ đón (waitingCageId) thì kiểm tra tải trọng và gán chuồng trước khi chốt trạng thái

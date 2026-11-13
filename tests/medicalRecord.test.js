@@ -488,4 +488,102 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       expect(otherOwnerRes.status).toBe(403);
     });
   });
+
+  describe('5. Ràng buộc đi tắt qua Lưu nháp / Hoàn tất bệnh án (BR-10, BR-12)', () => {
+    it('chặn lưu nháp bệnh án khi dịch vụ còn Booked (khách chưa Check-in) và chặn đi tắt nhảy bước BR-12, đồng thời tự nhả chuồng chờ BR-10 khi hợp lệ', async () => {
+      const bookedOrder = await AppointmentOrder.create({
+        code: 'APO-MED002',
+        ownerId: ownerUser._id,
+        petId: petDoc._id,
+        date: '2026-11-12',
+        derivedStatus: 'Booked',
+      });
+
+      const bookedService = await AppointmentService.create({
+        orderId: bookedOrder._id,
+        serviceId: examService._id,
+        assignedStaffId: vetUser._id,
+        sequenceNo: 1,
+        priceSnapshot: 200000,
+        status: 'Booked',
+      });
+
+      // 1. Chưa Check-in (Booked) không được lưu nháp bệnh án -> 409
+      const draftBookedRes = await request(app)
+        .put(`/api/medical-records/service/${bookedService._id}`)
+        .set('Authorization', `Bearer ${vetToken}`)
+        .send({ subjectiveNote: 'Ghi trước khi khách đến' });
+      expect(draftBookedRes.status).toBe(409);
+
+      // 2. Đơn CheckedIn có 2 dịch vụ Waiting + đang giữ chuồng chờ
+      const checkedOrder = await AppointmentOrder.create({
+        code: 'APO-MED003',
+        ownerId: ownerUser._id,
+        petId: petDoc._id,
+        date: '2026-11-13',
+        derivedStatus: 'CheckedIn',
+        checkedInAt: new Date(),
+      });
+
+      const [step1Svc, step2Svc] = await AppointmentService.create([
+        {
+          orderId: checkedOrder._id,
+          serviceId: examService._id,
+          assignedStaffId: vetUser._id,
+          sequenceNo: 1,
+          priceSnapshot: 200000,
+          status: 'Waiting',
+          enqueueAt: new Date(),
+        },
+        {
+          orderId: checkedOrder._id,
+          serviceId: vaccineService._id,
+          assignedStaffId: vetUser._id,
+          sequenceNo: 2,
+          priceSnapshot: 150000,
+          status: 'Waiting',
+          enqueueAt: new Date(),
+        },
+      ]);
+
+      await Cage.findByIdAndUpdate(waitingCage._id, { $set: { status: 'Occupied' } });
+      await CageAssignment.create({
+        cageId: waitingCage._id,
+        orderId: checkedOrder._id,
+        assignedById: vetUser._id,
+        assignedAt: new Date(),
+        releasedAt: null,
+      });
+
+      // 2a. Bỏ qua /start mà lưu nháp hoặc hoàn tất thẳng bước 2 khi bước 1 chưa xong -> 409 (BR-12)
+      const skipDraftRes = await request(app)
+        .put(`/api/medical-records/service/${step2Svc._id}`)
+        .set('Authorization', `Bearer ${vetToken}`)
+        .send({ subjectiveNote: 'Nhảy bước 2' });
+      expect(skipDraftRes.status).toBe(409);
+
+      const skipCompleteRes = await request(app)
+        .post(`/api/medical-records/service/${step2Svc._id}/complete`)
+        .set('Authorization', `Bearer ${vetToken}`)
+        .send({
+          subjectiveNote: 'S',
+          objectiveNote: 'O',
+          assessment: 'A',
+          plan: 'P',
+        });
+      expect(skipCompleteRes.status).toBe(409);
+
+      // 2b. Lưu nháp thẳng ở bước 1 từ Waiting -> thành công 200, chuyển InProgress và tự nhả chuồng chờ (BR-10)
+      const validDirectDraftRes = await request(app)
+        .put(`/api/medical-records/service/${step1Svc._id}`)
+        .set('Authorization', `Bearer ${vetToken}`)
+        .send({ subjectiveNote: 'Khám bước 1 trực tiếp từ Waiting' });
+      expect(validDirectDraftRes.status).toBe(200);
+
+      const cageAfter = await Cage.findById(waitingCage._id).lean();
+      const closedAssignment = await CageAssignment.findOne({ orderId: checkedOrder._id }).lean();
+      expect(cageAfter.status).toBe('Available');
+      expect(closedAssignment.releasedAt).toBeTruthy();
+    });
+  });
 });

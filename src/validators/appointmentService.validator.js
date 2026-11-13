@@ -275,7 +275,7 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
 
   // 1. Kiểm tra bản ghi dịch vụ trong lịch hẹn có tồn tại không
   const appointmentService = await AppointmentService.findById(appointmentServiceId)
-    .select('orderId status')
+    .select('orderId status serviceId')
     .lean();
   if (!appointmentService) {
     throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
@@ -303,7 +303,7 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
     );
   }
 
-  // 3. Kiểm tra nhân sự được chọn có tồn tại, đang Active và đúng role Bác sĩ / Groomer không
+  // 3. Kiểm tra nhân sự được chọn có tồn tại, đang Active và đúng role Bác sĩ / Groomer khớp loại dịch vụ
   const staff = await User.findById(assignedStaffId).select('role status').lean();
   if (!staff) {
     throw createError('Không tìm thấy nhân viên được phân công', 404);
@@ -313,6 +313,24 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
   }
   if (staff.status !== 'Active') {
     throw createError('Nhân sự được phân công hiện không ở trạng thái hoạt động (Active)');
+  }
+
+  if (appointmentService.serviceId && typeof Service.findById === 'function') {
+    const service = await Service.findById(appointmentService.serviceId)
+      .select('name category')
+      .lean();
+    if (service) {
+      if (service.category === 'Grooming' && staff.role !== 'Groomer') {
+        throw createError(
+          `Dịch vụ "${service.name}" (Grooming) chỉ được phân công cho nhân viên Groomer`
+        );
+      }
+      if (service.category !== 'Grooming' && staff.role !== 'Veterinarian') {
+        throw createError(
+          `Dịch vụ "${service.name}" (${service.category}) chỉ được phân công cho Bác sĩ thú y (Veterinarian)`
+        );
+      }
+    }
   }
 
   return {
@@ -458,6 +476,64 @@ async function loadServiceAssignedToGroomer(appointmentServiceId, groomerId) {
     throw createError('Bạn chỉ có thể thao tác trên dịch vụ được phân công cho mình', 403);
   }
   return appointmentService;
+}
+
+/**
+ * Kiểm tra dữ liệu khi nhân sự bắt đầu thực hiện (status -> 'InProgress') 1 dịch vụ trong lịch hẹn.
+ * - Phải đúng nhân viên được phân công (chống IDOR).
+ * - Dịch vụ phải đang ở trạng thái 'Waiting' (đã check-in & phân công).
+ * - Đảm bảo thứ tự dịch vụ BR-12: mọi dịch vụ đứng trước (sequenceNo nhỏ hơn) phải đã Done/Cancelled.
+ */
+async function validateStartAppointmentService(appointmentServiceId, staffId) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+  if (!staffId || !isValidObjectId(staffId)) {
+    throw createError('staffId không hợp lệ');
+  }
+
+  const appointmentService = await AppointmentService.findById(appointmentServiceId)
+    .select('orderId assignedStaffId status sequenceNo')
+    .lean();
+  if (!appointmentService) {
+    throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
+  }
+
+  if (
+    !appointmentService.assignedStaffId ||
+    String(appointmentService.assignedStaffId) !== String(staffId)
+  ) {
+    throw createError('Bạn chỉ có thể thao tác trên dịch vụ được phân công cho mình', 403);
+  }
+
+  if (appointmentService.status !== 'Waiting') {
+    throw createError(
+      `Chỉ có thể bắt đầu dịch vụ đang ở trạng thái chờ (Waiting), hiện tại: "${appointmentService.status}"`,
+      409
+    );
+  }
+
+  // BR-12: Kiểm tra thứ tự dịch vụ trong cùng đơn
+  if (typeof appointmentService.sequenceNo === 'number') {
+    const unfinishedPreviousService = await AppointmentService.findOne({
+      orderId: appointmentService.orderId,
+      sequenceNo: { $lt: appointmentService.sequenceNo },
+      status: { $nin: ['Done', 'Cancelled'] },
+    })
+      .populate('serviceId', 'name')
+      .lean();
+
+    if (unfinishedPreviousService) {
+      const prevName =
+        unfinishedPreviousService.serviceId?.name || `#${unfinishedPreviousService.sequenceNo}`;
+      throw createError(
+        `Không thể bắt đầu: Dịch vụ đứng trước "${prevName}" (thứ tự #${unfinishedPreviousService.sequenceNo}) chưa hoàn thành`,
+        409
+      );
+    }
+  }
+
+  return validateUpdateAppointmentServiceStatus(appointmentServiceId, { status: 'InProgress' });
 }
 
 /**
@@ -614,6 +690,7 @@ module.exports = {
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
   validateUpdateAppointmentServiceStatus,
+  validateStartAppointmentService,
   validateCompleteAppointmentService,
   validateCreateGroomingNote,
   validateGetGroomingNoteByServiceId,

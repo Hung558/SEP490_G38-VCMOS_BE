@@ -8,12 +8,15 @@ jest.mock('../../src/models/AppointmentOrder');
 jest.mock('../../src/models/AppointmentService');
 jest.mock('../../src/models/Pet');
 jest.mock('../../src/models/User');
+jest.mock('../../src/models/Cage');
+jest.mock('../../src/models/CageAssignment');
 
 const nodemailer = require('nodemailer');
 const AppointmentOrder = require('../../src/models/AppointmentOrder');
 const AppointmentService = require('../../src/models/AppointmentService');
 const Pet = require('../../src/models/Pet');
 const User = require('../../src/models/User');
+const CageAssignment = require('../../src/models/CageAssignment');
 const service = require('../../src/services/appointmentOrder.service');
 
 // ---------- helpers ----------
@@ -151,14 +154,25 @@ describe('createOnlineAppointment', () => {
       expect(AppointmentOrder.create).not.toHaveBeenCalled();
     });
 
-    it('only selects _id and name of the pet (name is needed for the notification email)', async () => {
-      const { select } = mockPetFindOne({ _id: PET_ID, name: 'Milu' });
+    it('only selects _id, name, and status of the pet (name for email, status to block Deleted pets)', async () => {
+      const { select } = mockPetFindOne({ _id: PET_ID, name: 'Milu', status: 'Active' });
       AppointmentOrder.exists.mockResolvedValue(null);
       AppointmentOrder.create.mockResolvedValue({});
 
       await service.createOnlineAppointment(OWNER_ID, input);
 
-      expect(select).toHaveBeenCalledWith('_id name');
+      expect(select).toHaveBeenCalledWith('_id name status');
+    });
+
+    it('throws 400 when the pet has been soft-deleted (status = Deleted)', async () => {
+      mockPetFindOne({ _id: PET_ID, name: 'Milu', status: 'Deleted' });
+
+      await expect(service.createOnlineAppointment(OWNER_ID, input)).rejects.toMatchObject({
+        status: 400,
+        message: 'Không thể đặt lịch cho thú cưng đã bị xóa khỏi hồ sơ',
+      });
+      expect(AppointmentOrder.exists).not.toHaveBeenCalled();
+      expect(AppointmentOrder.create).not.toHaveBeenCalled();
     });
   });
 
@@ -1324,6 +1338,11 @@ describe('cancelAppointment', () => {
   beforeEach(() => {
     AppointmentService.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 2 });
     AppointmentService.exists = jest.fn().mockResolvedValue(null);
+    CageAssignment.findOne.mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      }),
+    });
   });
 
   it('throws 404 when appointment does not exist', async () => {

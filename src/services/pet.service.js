@@ -191,6 +191,17 @@ const updatePet = async (ownerId, petId, data = {}, photo) => {
  * The record and its photo are kept. Idempotent.
  */
 const deletePet = async (ownerId, petId) => {
+  if (typeof AppointmentOrder.exists === 'function') {
+    const hasActiveAppointment = await AppointmentOrder.exists({
+      petId,
+      ownerId,
+      derivedStatus: { $in: ['Booked', 'CheckedIn', 'InProgress', 'WaitOwner'] },
+    });
+    if (hasActiveAppointment) {
+      throw createError('Không thể xóa thú cưng đang có lịch hẹn hoặc ca khám chưa hoàn tất', 409);
+    }
+  }
+
   const pet = await Pet.findOneAndUpdate(
     { _id: petId, ownerId },
     { $set: { status: 'Deleted' } },

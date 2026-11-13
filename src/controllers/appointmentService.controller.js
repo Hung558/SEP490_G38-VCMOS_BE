@@ -5,6 +5,7 @@ const {
   assignStaffToAppointmentService,
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
+  startAppointmentService,
   updateAppointmentServiceStatus,
   createGroomingNote,
   getGroomingNoteByServiceId,
@@ -17,7 +18,7 @@ const {
   validateAssignStaffToService,
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
-  validateUpdateAppointmentServiceStatus,
+  validateStartAppointmentService,
   validateCompleteAppointmentService,
   validateCreateGroomingNote,
   validateGetGroomingNoteByServiceId,
@@ -141,10 +142,8 @@ async function cancelAppointmentServiceController(req, res) {
  */
 async function startAppointmentServiceController(req, res) {
   try {
-    const validated = await validateUpdateAppointmentServiceStatus(req.params.id, {
-      status: 'InProgress',
-    });
-    const { message, data } = await updateAppointmentServiceStatus(validated);
+    const validated = await validateStartAppointmentService(req.params.id, req.user.id);
+    const { message, data } = await startAppointmentService(validated);
     return res.status(200).json({ message, data });
   } catch (err) {
     return handleError(res, err);

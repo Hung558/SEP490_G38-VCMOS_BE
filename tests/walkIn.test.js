@@ -444,4 +444,63 @@ describe('Walk-in Customer Reception & BR-04 Activation (/api/appointment-orders
       expect(res.body.data.appointment.intake.recordedAt).toBeTruthy();
     });
   });
+
+  describe('Nhóm 1: Pre-check & rollback chuồng + cờ requiresIsolation cho Walk-in', () => {
+    test('Trả 400 và không để lại User/Pet/Order mồ côi khi Walk-in chọn chuồng không đủ tải trọng', async () => {
+      const freshSmallCage = await Cage.create({
+        label: 'CAG-SMALL-RB01',
+        size: 'S',
+        maxWeightKg: 10,
+        zone: 'Holding',
+        isIsolated: false,
+        status: 'Available',
+      });
+
+      const targetPhone = '0977112233';
+      const res = await request(app)
+        .post('/api/appointment-orders/walk-in')
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({
+          phone: targetPhone,
+          fullName: 'Khách Rollback Chuồng',
+          petInfo: { name: 'Husky Nặng', species: 'Chó', weight: 25 },
+          services: [{ serviceId: medicalService._id, assignedStaffId: vetUser._id }],
+          cageId: freshSmallCage._id,
+        });
+
+      expect(res.status).toBe(400);
+
+      const createdUser = await User.findOne({ phone: targetPhone }).lean();
+      expect(createdUser).toBeNull();
+    });
+
+    test('Cho phép Walk-in truyền requiresIsolation: true để gán chuồng cách ly hợp lệ', async () => {
+      const isolatedCage = await Cage.create({
+        label: 'CAG-ISO-WI01',
+        size: 'M',
+        maxWeightKg: 20,
+        zone: 'Holding',
+        isIsolated: true,
+        status: 'Available',
+      });
+
+      const res = await request(app)
+        .post('/api/appointment-orders/walk-in')
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({
+          phone: '0977445566',
+          fullName: 'Khách Cách Ly Walkin',
+          petInfo: { name: 'Miu Cách Ly', species: 'Mèo', weight: 4 },
+          services: [{ serviceId: medicalService._id, assignedStaffId: vetUser._id }],
+          cageId: isolatedCage._id,
+          requiresIsolation: true,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.cageAssignment).toBeTruthy();
+
+      const updatedCage = await Cage.findById(isolatedCage._id).lean();
+      expect(updatedCage.status).toBe('Occupied');
+    });
+  });
 });

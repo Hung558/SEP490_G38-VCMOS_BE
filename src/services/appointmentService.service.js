@@ -1,7 +1,9 @@
 const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Service = require('../models/Service');
+const CageAssignment = require('../models/CageAssignment');
 const { createOnlineAppointment } = require('./appointmentOrder.service');
+const { releaseCageAssignment } = require('./cageAssignment.service');
 const cloudinary = require('../config/cloudinary');
 
 const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
@@ -298,6 +300,24 @@ async function getAppointmentServicesByAssignedStaffId({ assignedStaffId, status
 }
 
 /**
+ * Tìm và giải phóng chuồng chờ đang mở (`releasedAt: null`) của đơn hẹn nếu có (BR-10).
+ */
+async function releaseOpenCageForOrder(orderId) {
+  if (!orderId || typeof CageAssignment.findOne !== 'function') return;
+
+  const openAssignment = await CageAssignment.findOne({
+    orderId,
+    releasedAt: null,
+  })
+    .select('_id')
+    .lean();
+
+  if (openAssignment) {
+    await releaseCageAssignment(String(openAssignment._id));
+  }
+}
+
+/**
  * UC-18, BR-07, BR-09: Hủy 1 dịch vụ lẻ trong lịch hẹn (do PetOwner hoặc Receptionist thực hiện).
  * - Nếu tất cả dịch vụ trong đơn đều đã bị hủy -> đơn chuyển sang 'Cancelled'.
  * - Nếu đơn còn dịch vụ khác chưa hủy -> giữ nguyên trạng thái đơn (hoặc chuyển sang 'WaitOwner'
@@ -400,6 +420,8 @@ async function cancelAppointmentService({ appointmentServiceId, userId, role, re
         cancelledBy: userId,
       },
     });
+    // Nếu hủy dịch vụ lẻ cuối cùng khiến cả đơn chuyển thành Cancelled thì phải trả chuồng chờ đang giữ (nếu có)
+    await releaseOpenCageForOrder(order._id);
   } else if (['CheckedIn', 'InProgress'].includes(order.derivedStatus)) {
     const activeServices = allServices.filter((item) => item.status !== 'Cancelled');
     if (activeServices.length > 0 && activeServices.every((item) => item.status === 'Done')) {
@@ -486,6 +508,21 @@ async function updateAppointmentServiceStatus({ appointmentServiceId, status }) 
     message: 'Cập nhật trạng thái dịch vụ thành công',
     data: updatedService,
   };
+}
+
+/**
+ * Nhân sự bắt đầu thực hiện dịch vụ (Waiting -> InProgress) và tự động nhả chuồng chờ (BR-10).
+ */
+async function startAppointmentService({ appointmentServiceId }) {
+  const result = await updateAppointmentServiceStatus({
+    appointmentServiceId,
+    status: 'InProgress',
+  });
+
+  const orderId = result.data?.orderId?._id || result.data?.orderId;
+  await releaseOpenCageForOrder(orderId);
+
+  return result;
 }
 
 const GROOMING_NOTE_CLOUDINARY_FOLDER = 'grooming-notes';
@@ -630,6 +667,7 @@ module.exports = {
   getAppointmentServicesByAssignedStaffId,
   cancelAppointmentService,
   updateAppointmentServiceStatus,
+  startAppointmentService,
   createGroomingNote,
   getGroomingNoteByServiceId,
   getMyGroomingNotes,
