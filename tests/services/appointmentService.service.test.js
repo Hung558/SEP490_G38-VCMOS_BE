@@ -17,6 +17,12 @@ jest.mock('../../src/models/AppointmentOrder', () => ({
 jest.mock('../../src/models/Service', () => ({
   find: jest.fn(),
 }));
+jest.mock('../../src/models/CageAssignment', () => ({
+  findOne: jest.fn(),
+}));
+jest.mock('../../src/services/cageAssignment.service', () => ({
+  releaseCageAssignment: jest.fn(),
+}));
 // Không nạp appointmentOrder.service thật (kéo theo nodemailer, Pet, User...)
 jest.mock('../../src/services/appointmentOrder.service', () => ({
   createOnlineAppointment: jest.fn(),
@@ -32,6 +38,8 @@ jest.mock('../../src/config/cloudinary', () => ({
 const AppointmentService = require('../../src/models/AppointmentService');
 const AppointmentOrder = require('../../src/models/AppointmentOrder');
 const Service = require('../../src/models/Service');
+const CageAssignment = require('../../src/models/CageAssignment');
+const { releaseCageAssignment } = require('../../src/services/cageAssignment.service');
 const { createOnlineAppointment } = require('../../src/services/appointmentOrder.service');
 const {
   createOnlineAppointmentService,
@@ -552,6 +560,10 @@ describe('createOnlineBooking', () => {
 describe('getAppointmentServicesByOrderId & assignStaffToAppointmentService', () => {
   beforeEach(() => {
     jest.resetAllMocks();
+    CageAssignment.findOne.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(null),
+    });
   });
 
   it('getAppointmentServicesByOrderId: trả về danh sách dịch vụ của đơn hẹn đã populate và sort theo sequenceNo', async () => {
@@ -632,6 +644,10 @@ describe('getAppointmentServicesByAssignedStaffId', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    CageAssignment.findOne.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(null),
+    });
   });
 
   describe('bộ lọc', () => {
@@ -742,6 +758,10 @@ describe('cancelAppointmentService', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    CageAssignment.findOne.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(null),
+    });
   });
 
   it('ném lỗi 404 khi không tìm thấy dịch vụ trong lịch hẹn', async () => {
@@ -883,6 +903,46 @@ describe('cancelAppointmentService', () => {
         cancelledBy: 'owner-1',
       },
     });
+  });
+
+  it('tự động giải phóng chuồng chờ đang mở khi hủy dịch vụ cuối cùng khiến đơn CheckedIn chuyển sang Cancelled', async () => {
+    AppointmentService.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'as-last',
+        orderId: 'order-1',
+        status: 'Waiting',
+      }),
+    });
+    AppointmentOrder.findById.mockReturnValue({
+      lean: jest.fn().mockResolvedValue({
+        _id: 'order-1',
+        ownerId: 'owner-1',
+        date: FUTURE_DATE,
+        derivedStatus: 'CheckedIn',
+      }),
+    });
+    AppointmentService.findByIdAndUpdate.mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ _id: 'as-last', status: 'Cancelled' }),
+    });
+    AppointmentService.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{ status: 'Cancelled' }]),
+    });
+    CageAssignment.findOne.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({ _id: 'ca-open-1' }),
+    });
+    releaseCageAssignment.mockResolvedValue({ _id: 'ca-open-1', releasedAt: new Date() });
+
+    await cancelAppointmentService({
+      appointmentServiceId: 'as-last',
+      userId: 'recep-1',
+      role: 'Receptionist',
+      reason: 'Khách hủy dịch vụ cuối',
+    });
+
+    expect(releaseCageAssignment).toHaveBeenCalledWith('ca-open-1');
   });
 
   it('cho phép Lễ tân hủy dịch vụ Waiting trong đơn CheckedIn; nếu dịch vụ còn lại đã Done thì chuyển đơn sang WaitOwner', async () => {

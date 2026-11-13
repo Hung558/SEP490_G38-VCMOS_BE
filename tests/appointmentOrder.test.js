@@ -577,5 +577,41 @@ describe('Nhóm 1: Vá các lỗi logic đặt lịch, check-in, phân công, b�
     expect(cageAfterStart.status).toBe('Available');
     expect(assignmentAfterStart.releasedAt).toBeTruthy();
   });
+
+  test('Hủy dịch vụ lẻ cuối cùng trong đơn CheckedIn -> tự chuyển đơn sang Cancelled và giải phóng chuồng chờ', async () => {
+    const bookingRes = await request(app)
+      .post('/api/appointment-services/online-booking')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        petId: petDoc._id,
+        date: formatDateOffsetVN(6),
+        slotStart: '15:30',
+        services: [{ serviceId: medicalService._id }],
+      });
+    expect(bookingRes.status).toBe(201);
+
+    const orderId = bookingRes.body.data.appointment._id;
+    const svcId = bookingRes.body.data.services[0]._id;
+
+    const checkInRes = await request(app)
+      .patch(`/api/appointment-orders/${orderId}/check-in`)
+      .set('Authorization', `Bearer ${receptionistToken}`)
+      .send({ cageId: smallCage._id });
+    expect(checkInRes.status).toBe(200);
+
+    const cancelSvcRes = await request(app)
+      .patch(`/api/appointment-services/${svcId}/cancel`)
+      .set('Authorization', `Bearer ${receptionistToken}`)
+      .send({ reason: 'Khách đổi ý về trước khi khám' });
+
+    expect(cancelSvcRes.status).toBe(200);
+
+    const updatedOrder = await AppointmentOrder.findById(orderId).lean();
+    const cageAfter = await Cage.findById(smallCage._id).lean();
+    const closedAssignment = await CageAssignment.findOne({ orderId }).lean();
+    expect(updatedOrder.derivedStatus).toBe('Cancelled');
+    expect(cageAfter.status).toBe('Available');
+    expect(closedAssignment.releasedAt).toBeTruthy();
+  });
 });
 
