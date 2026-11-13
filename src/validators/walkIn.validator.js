@@ -1,5 +1,6 @@
 const { isValidObjectId } = require('mongoose');
 const { PHONE_REGEX, EMAIL_REGEX, MAX_FULLNAME } = require('./auth.validator');
+const { validateIntakePayload } = require('./appointmentOrder.validator');
 
 const MAX_PET_NAME = 100;
 const MAX_SHORT_TEXT = 50;
@@ -56,7 +57,7 @@ const validateCreateWalkInBooking = (body = {}) => {
     };
   }
 
-  const { phone, fullName, email, petId, petInfo, date, note, services, cageId } = body;
+  const { phone, fullName, email, petId, petInfo, date, note, intake, services, cageId } = body;
 
   // 1. Validate thông tin khách hàng
   let cleanPhone;
@@ -184,6 +185,22 @@ const validateCreateWalkInBooking = (body = {}) => {
     }
   }
 
+  // 4b. Validate phiếu kê khai ban đầu của lễ tân (intake - tuỳ chọn khi tạo đơn vãng lai)
+  let cleanIntake;
+  if (intake !== undefined) {
+    const intakeResult = validateIntakePayload(intake);
+    if (intakeResult.fieldErrors.intake) {
+      errors.intake = intakeResult.fieldErrors.intake;
+    }
+    if (intakeResult.fieldErrors.symptoms) {
+      errors['intake.symptoms'] = intakeResult.fieldErrors.symptoms;
+    }
+    if (intakeResult.fieldErrors.initialCondition) {
+      errors['intake.initialCondition'] = intakeResult.fieldErrors.initialCondition;
+    }
+    cleanIntake = intakeResult.value;
+  }
+
   // 5. Validate danh sách dịch vụ yêu cầu
   const cleanServices = [];
   if (!Array.isArray(services) || services.length === 0) {
@@ -247,6 +264,7 @@ const validateCreateWalkInBooking = (body = {}) => {
       petInfo: cleanPetInfo,
       date: cleanDate,
       note: cleanNote,
+      intake: cleanIntake,
       services: cleanServices,
       cageId: cleanCageId,
     },

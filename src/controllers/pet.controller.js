@@ -51,7 +51,8 @@ const getPetById = async (req, res) => {
   try {
     const petId = validatePetId(req.params.petId);
     const pet = await petService.getPetById(req.user.id, petId, req.user.role);
-    return res.json({ pet });
+    const appointmentNotes = await petService.getPetAppointmentNotes(pet._id);
+    return res.json({ pet, appointmentNotes });
   } catch (err) {
     return handleError(res, err);
   }

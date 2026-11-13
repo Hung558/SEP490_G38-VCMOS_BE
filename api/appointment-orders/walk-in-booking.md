@@ -94,6 +94,10 @@ Khi Lễ tân nhập số điện thoại của khách vào ô tìm kiếm trên
     "notes": "Hơi nhát người lạ"
   },
   "note": "Khách đưa bé đến khám trực tiếp tại quầy",
+  "intake": {
+    "symptoms": "Bé ho nhẹ từ tối qua, ăn ít",
+    "initialCondition": "Tỉnh táo, thân nhiệt bình thường"
+  },
   "services": [
     {
       "serviceId": "<ID_DICH_VU_KHAM>",

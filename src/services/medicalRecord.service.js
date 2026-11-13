@@ -423,7 +423,7 @@ const getMedicalRecordByServiceId = async (currentUser, appointmentServiceId) =>
       populate: [
         { path: 'serviceId', select: 'code name category basePrice' },
         { path: 'assignedStaffId', select: 'code fullName role' },
-        { path: 'orderId', select: 'code date derivedStatus ownerId' },
+        { path: 'orderId', select: 'code date derivedStatus ownerId note intake' },
       ],
     })
     .lean();
@@ -464,7 +464,7 @@ const getMedicalHistoryByPetId = async (currentUser, petId) => {
       populate: [
         { path: 'serviceId', select: 'code name category' },
         { path: 'assignedStaffId', select: 'code fullName role' },
-        { path: 'orderId', select: 'code date derivedStatus' },
+        { path: 'orderId', select: 'code date derivedStatus note intake' },
       ],
     })
     .sort({ createdAt: -1 })

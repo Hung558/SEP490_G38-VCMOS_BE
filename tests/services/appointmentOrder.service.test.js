@@ -1271,6 +1271,48 @@ describe('checkInAppointment', () => {
       await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toThrow('db down');
     });
   });
+
+  describe('with receptionist intake assessment', () => {
+    it('stores intake symptoms, initialCondition, recordedBy, and recordedAt in $set', async () => {
+      const staffId = '64f100000000000000000099';
+      const checked = {
+        _id: APPOINTMENT_ID,
+        derivedStatus: 'CheckedIn',
+        intake: {
+          symptoms: 'Bỏ ăn 2 ngày',
+          initialCondition: 'Hơi mệt, nhiệt độ bình thường',
+          recordedBy: staffId,
+        },
+      };
+      mockFindOneAndUpdate(checked);
+
+      const result = await service.checkInAppointment(APPOINTMENT_ID, {
+        staffId,
+        intake: {
+          symptoms: 'Bỏ ăn 2 ngày',
+          initialCondition: 'Hơi mệt, nhiệt độ bình thường',
+        },
+      });
+
+      expect(AppointmentOrder.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: APPOINTMENT_ID, derivedStatus: 'Booked' },
+        {
+          $set: {
+            derivedStatus: 'CheckedIn',
+            checkedInAt: expect.any(Date),
+            intake: {
+              symptoms: 'Bỏ ăn 2 ngày',
+              initialCondition: 'Hơi mệt, nhiệt độ bình thường',
+              recordedBy: staffId,
+              recordedAt: expect.any(Date),
+            },
+          },
+        },
+        { new: true }
+      );
+      expect(result).toEqual(checked);
+    });
+  });
 });
 
 // ---------- cancelAppointment ----------

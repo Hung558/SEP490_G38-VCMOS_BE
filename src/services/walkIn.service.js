@@ -91,20 +91,31 @@ const createWalkInPet = async (ownerId, petInfo) => {
 /**
  * Tạo đơn lịch hẹn Walk-in ở trạng thái CheckedIn ngay lập tức theo UC-19 & BR-06
  */
-const createWalkInAppointmentOrder = async ({ petId, ownerId, date, note }) => {
+const createWalkInAppointmentOrder = async ({ petId, ownerId, date, note, intake, recordedBy }) => {
   const checkedInAt = new Date();
+  const orderPayload = {
+    code: generateEntityCode('APT'),
+    petId,
+    ownerId,
+    date,
+    note,
+    isOnline: false,
+    derivedStatus: 'CheckedIn',
+    checkedInAt,
+  };
+
+  if (intake) {
+    orderPayload.intake = {
+      symptoms: intake.symptoms,
+      initialCondition: intake.initialCondition,
+      recordedBy: recordedBy || null,
+      recordedAt: checkedInAt,
+    };
+  }
+
   for (let attempt = 1; attempt <= MAX_CODE_RETRIES; attempt++) {
     try {
-      const order = await AppointmentOrder.create({
-        code: generateEntityCode('APT'),
-        petId,
-        ownerId,
-        date,
-        note,
-        isOnline: false,
-        derivedStatus: 'CheckedIn',
-        checkedInAt,
-      });
+      const order = await AppointmentOrder.create(orderPayload);
       return order.toObject();
     } catch (err) {
       if (isDuplicateCodeError(err)) continue;
@@ -158,7 +169,7 @@ const lookupCustomerByPhone = async (phone) => {
  * 6. Gán chuồng lưu giữ (CageAssignment) nếu Lễ tân chọn chuồng ngay.
  */
 const createWalkInBooking = async (receptionistId, payload) => {
-  const { phone, fullName, email, petId, petInfo, date, note, services, cageId } = payload;
+  const { phone, fullName, email, petId, petInfo, date, note, intake, services, cageId } = payload;
 
   // 1. Kiểm tra toàn bộ dịch vụ có tồn tại và đang Active không
   const serviceIds = [...new Set(services.map((item) => String(item.serviceId)))];
@@ -288,6 +299,8 @@ const createWalkInBooking = async (receptionistId, payload) => {
     ownerId: customer._id,
     date,
     note,
+    intake,
+    recordedBy: receptionistId,
   });
 
   // 7. Tạo tuần tự từng dịch vụ trong đơn Walk-in (AppointmentService)
