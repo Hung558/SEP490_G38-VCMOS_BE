@@ -9,6 +9,7 @@ const {
   getAppointmentServicesByAssignedStaffIdController,
   cancelAppointmentServiceController,
   startAppointmentServiceController,
+  completeAppointmentServiceController,
   createGroomingNoteController,
   getMyGroomingNotesController,
   getGroomingNoteByServiceIdController,
@@ -31,6 +32,9 @@ router.get('/my-queue', protect, authorize('Veterinarian', 'Groomer'), getAppoin
 
 // Bác sĩ / Groomer bắt đầu thực hiện 1 dịch vụ trong lịch hẹn (status -> InProgress)
 router.patch('/:id/start', protect, authorize('Veterinarian', 'Groomer'), startAppointmentServiceController);
+
+// Groomer hoàn thành 1 dịch vụ được phân công cho mình (status -> Done)
+router.patch('/:id/complete', protect, authorize('Groomer'), completeAppointmentServiceController);
 
 // PetOwner / Lễ tân hủy 1 dịch vụ lẻ trong lịch hẹn (UC-18, BR-07)
 router.patch('/:id/cancel', protect, authorize('PetOwner', 'Receptionist'), cancelAppointmentServiceController);

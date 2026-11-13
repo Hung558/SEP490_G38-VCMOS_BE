@@ -461,6 +461,40 @@ async function loadServiceAssignedToGroomer(appointmentServiceId, groomerId) {
 }
 
 /**
+ * Kiểm tra dữ liệu khi Groomer hoàn thành (status -> 'Done') 1 dịch vụ trong lịch hẹn.
+ *
+ * Quy tắc:
+ * - Dịch vụ phải được phân công cho chính Groomer đang đăng nhập (chống IDOR).
+ * - Dịch vụ phải đang 'InProgress' (không thể nhảy từ Booked/Waiting sang Done).
+ * - Lịch hẹn cha chưa kết thúc (Done / Cancelled / Overdue) - kiểm tra lại bằng
+ *   validateUpdateAppointmentServiceStatus.
+ *
+ * @param {string} appointmentServiceId - ID của AppointmentService trên params
+ * @param {string} groomerId - Id Groomer đang đăng nhập (lấy từ token)
+ * @returns {Promise<{ appointmentServiceId: string, status: 'Done' }>}
+ * @throws {Error} lỗi với `statusCode` 400 | 403 | 404 | 409 và thông báo tiếng Việt
+ */
+async function validateCompleteAppointmentService(appointmentServiceId, groomerId) {
+  if (!appointmentServiceId || !isValidObjectId(appointmentServiceId)) {
+    throw createError('ID dịch vụ lịch hẹn không hợp lệ');
+  }
+  if (!groomerId || !isValidObjectId(groomerId)) {
+    throw createError('groomerId không hợp lệ');
+  }
+
+  const appointmentService = await loadServiceAssignedToGroomer(appointmentServiceId, groomerId);
+
+  if (appointmentService.status !== 'InProgress') {
+    throw createError(
+      `Chỉ có thể hoàn thành dịch vụ đang thực hiện (InProgress), hiện tại: "${appointmentService.status}"`,
+      409
+    );
+  }
+
+  return validateUpdateAppointmentServiceStatus(appointmentServiceId, { status: 'Done' });
+}
+
+/**
  * Kiểm tra dữ liệu khi Groomer tạo ghi chú chăm sóc (GroomingNote) cho 1 dịch vụ.
  *
  * Request là JSON hoặc multipart/form-data:
@@ -580,6 +614,7 @@ module.exports = {
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
   validateUpdateAppointmentServiceStatus,
+  validateCompleteAppointmentService,
   validateCreateGroomingNote,
   validateGetGroomingNoteByServiceId,
   validateGetMyGroomingNotes,

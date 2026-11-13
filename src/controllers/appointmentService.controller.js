@@ -18,6 +18,7 @@ const {
   validateGetServicesByAssignedStaffId,
   validateCancelAppointmentService,
   validateUpdateAppointmentServiceStatus,
+  validateCompleteAppointmentService,
   validateCreateGroomingNote,
   validateGetGroomingNoteByServiceId,
   validateGetMyGroomingNotes,
@@ -151,6 +152,21 @@ async function startAppointmentServiceController(req, res) {
 }
 
 /**
+ * PATCH /appointment-services/:id/complete
+ * Không cần body: status luôn được đặt thành 'Done'.
+ * Groomer hoàn thành 1 dịch vụ được phân công cho chính mình (phải đang 'InProgress')
+ */
+async function completeAppointmentServiceController(req, res) {
+  try {
+    const validated = await validateCompleteAppointmentService(req.params.id, req.user.id);
+    const { message, data } = await updateAppointmentServiceStatus(validated);
+    return res.status(200).json({ message, data });
+  } catch (err) {
+    return handleError(res, err);
+  }
+}
+
+/**
  * POST /appointment-services/:id/grooming-note
  * Content-Type: multipart/form-data (hoặc JSON nếu không có ảnh)
  * Text: beforeNote?, afterNote?, recommendations?
@@ -209,6 +225,7 @@ module.exports = {
   getAppointmentServicesByAssignedStaffIdController,
   cancelAppointmentServiceController,
   startAppointmentServiceController,
+  completeAppointmentServiceController,
   createGroomingNoteController,
   getMyGroomingNotesController,
   getGroomingNoteByServiceIdController,
