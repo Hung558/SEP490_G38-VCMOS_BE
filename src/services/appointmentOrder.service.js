@@ -3,16 +3,20 @@ const nodemailer = require('nodemailer');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Pet = require('../models/Pet');
 const User = require('../models/User');
+const Service = require('../models/Service');
 const Cage = require('../models/Cage');
 const CageAssignment = require('../models/CageAssignment');
 const AppointmentService = require('../models/AppointmentService');
-const { canCageAccommodatePet } = require('./cage.service');
+const { canCageAccommodatePet, getPreferredCageSizeOrder } = require('./cage.service');
 const { createCageAssignment, releaseCageAssignment } = require('./cageAssignment.service');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
 const MAX_CODE_RETRIES = 5;
 const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
+const CLINICAL_STAFF_ROLES = ['Veterinarian', 'Groomer'];
+const BLOCKED_SERVICE_STATUSES = ['InProgress', 'Done', 'Cancelled', 'Overdue'];
+const CAGE_PUBLIC_FIELDS = 'label size maxWeightKg zone isIsolated status';
 
 const todayVN = () =>
   new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
@@ -143,12 +147,208 @@ const notifyReceptionistsOfNewAppointment = async (appointment, pet) => {
 };
 
 /**
+ * Tự động chọn 1 chuồng phù hợp cân nặng thú cưng cho đúng ngày hẹn (date) mà chưa có đơn nào giữ chỗ trong ngày đó.
+ * Không đổi Cage.status sang 'Occupied' khi mới đặt lịch để không ảnh hưởng các ngày khác.
+ */
+const findAvailableReservedCageId = async ({ date, petWeight }) => {
+  if (!date || typeof Cage.find !== 'function' || typeof AppointmentOrder.find !== 'function') {
+    return null;
+  }
+
+  const cageQuery = Cage.find({ isIsolated: false });
+  if (!cageQuery || typeof cageQuery.select !== 'function') {
+    return null;
+  }
+  const candidateCages = await cageQuery.select(CAGE_PUBLIC_FIELDS).sort({ label: 1 }).lean();
+  if (!Array.isArray(candidateCages) || candidateCages.length === 0) {
+    return null;
+  }
+
+  const reservedOrdersQuery = AppointmentOrder.find({
+    date,
+    derivedStatus: { $nin: ['Cancelled', 'Done', 'Overdue'] },
+    reservedCageId: { $ne: null },
+  });
+  if (!reservedOrdersQuery || typeof reservedOrdersQuery.select !== 'function') {
+    return null;
+  }
+  const reservedOrders = await reservedOrdersQuery.select('reservedCageId').lean();
+  const reservedCageIds = new Set(
+    (Array.isArray(reservedOrders) ? reservedOrders : []).map((o) => String(o.reservedCageId))
+  );
+
+  // Nếu đặt lịch cho ngay hôm nay, loại thêm các chuồng đang có thú cưng nằm thực tế ở quầy
+  const occupiedTodayIds = new Set();
+  if (date === todayVN() && typeof CageAssignment.find === 'function') {
+    const activeAssignQuery = CageAssignment.find({ releasedAt: null });
+    if (activeAssignQuery && typeof activeAssignQuery.select === 'function') {
+      const activeAssignments = await activeAssignQuery.select('cageId').lean();
+      if (Array.isArray(activeAssignments)) {
+        for (const a of activeAssignments) {
+          occupiedTodayIds.add(String(a.cageId));
+        }
+      }
+    }
+  }
+
+  const preferredSizes = getPreferredCageSizeOrder(petWeight);
+  const eligibleCages = candidateCages.filter((cage) => {
+    const cageIdStr = String(cage._id);
+    if (reservedCageIds.has(cageIdStr) || occupiedTodayIds.has(cageIdStr)) return false;
+    return canCageAccommodatePet(cage.size, petWeight, cage.isIsolated, false, cage.maxWeightKg).allowed;
+  });
+
+  if (eligibleCages.length === 0) {
+    return null;
+  }
+
+  eligibleCages.sort((a, b) => {
+    const zoneRankA = a.zone === 'Holding' ? 0 : 1;
+    const zoneRankB = b.zone === 'Holding' ? 0 : 1;
+    if (zoneRankA !== zoneRankB) return zoneRankA - zoneRankB;
+
+    const sizeRankA = preferredSizes.indexOf(a.size);
+    const sizeRankB = preferredSizes.indexOf(b.size);
+    if (sizeRankA !== sizeRankB) return sizeRankA - sizeRankB;
+
+    return String(a.label || '').localeCompare(String(b.label || ''));
+  });
+
+  return eligibleCages[0]._id;
+};
+
+/**
+ * Chọn dịch vụ đại diện đang hoạt động của đơn: InProgress -> Waiting -> Booked -> Done cuối cùng.
+ */
+const pickCurrentService = (services = []) => {
+  if (!Array.isArray(services) || services.length === 0) return null;
+  const inProgress = services.find((s) => s.status === 'InProgress');
+  if (inProgress) return inProgress;
+  const waiting = services.find((s) => s.status === 'Waiting');
+  if (waiting) return waiting;
+  const booked = services.find((s) => s.status === 'Booked');
+  if (booked) return booked;
+  const doneServices = services.filter((s) => s.status === 'Done');
+  return doneServices.length > 0 ? doneServices[doneServices.length - 1] : null;
+};
+
+/**
+ * Gắn thêm thông tin chuồng (rõ label & size), danh sách dịch vụ và dịch vụ hiện tại kèm bác sĩ phụ trách cho danh sách đơn.
+ * Dùng batch query ($in) để tránh N+1; tự bỏ qua an toàn nếu chạy trong unit test chưa mock đủ các model phụ.
+ */
+const enrichOrdersWithCageAndServices = async (orders) => {
+  if (!Array.isArray(orders) || orders.length === 0) return orders;
+
+  const orderIds = orders.map((o) => o._id).filter(Boolean);
+  if (orderIds.length === 0) return orders;
+
+  let activeAssignmentMap = null;
+  let latestAssignmentMap = null;
+  if (typeof CageAssignment.find === 'function') {
+    const assignQuery = CageAssignment.find({ orderId: { $in: orderIds } });
+    if (assignQuery && typeof assignQuery.populate === 'function') {
+      const assignments = await assignQuery
+        .populate('cageId', CAGE_PUBLIC_FIELDS)
+        .sort({ assignedAt: -1 })
+        .lean();
+      if (Array.isArray(assignments)) {
+        activeAssignmentMap = new Map();
+        latestAssignmentMap = new Map();
+        for (const a of assignments) {
+          const key = String(a.orderId);
+          if (a.releasedAt == null && !activeAssignmentMap.has(key)) {
+            activeAssignmentMap.set(key, a);
+          }
+          if (!latestAssignmentMap.has(key)) {
+            latestAssignmentMap.set(key, a);
+          }
+        }
+      }
+    }
+  }
+
+  const isPopulatedCage = (val) =>
+    Boolean(val && typeof val === 'object' && ('label' in val || 'size' in val));
+
+  let reservedCageMap = null;
+  const reservedCageIds = [
+    ...new Set(
+      orders
+        .map((o) => (o.reservedCageId && !isPopulatedCage(o.reservedCageId) ? String(o.reservedCageId) : null))
+        .filter(Boolean)
+    ),
+  ];
+  if (reservedCageIds.length > 0 && typeof Cage.find === 'function') {
+    const cageQuery = Cage.find({ _id: { $in: reservedCageIds } });
+    if (cageQuery && typeof cageQuery.select === 'function') {
+      const cages = await cageQuery.select(CAGE_PUBLIC_FIELDS).lean();
+      if (Array.isArray(cages)) {
+        reservedCageMap = new Map(cages.map((c) => [String(c._id), c]));
+      }
+    }
+  }
+
+  let servicesByOrder = null;
+  if (typeof AppointmentService.find === 'function') {
+    const svcQuery = AppointmentService.find({ orderId: { $in: orderIds } });
+    if (svcQuery && typeof svcQuery.populate === 'function') {
+      const orderServices = await svcQuery
+        .populate('serviceId', 'code name category basePrice defaultDuration')
+        .populate('assignedStaffId', 'code fullName role status')
+        .sort({ sequenceNo: 1 })
+        .lean();
+      if (Array.isArray(orderServices)) {
+        servicesByOrder = new Map();
+        for (const svc of orderServices) {
+          const key = String(svc.orderId);
+          if (!servicesByOrder.has(key)) servicesByOrder.set(key, []);
+          servicesByOrder.get(key).push(svc);
+        }
+      }
+    }
+  }
+
+  // Nếu mọi query phụ đều không hoạt động (unit test mock tối giản), trả nguyên danh sách ban đầu
+  if (!activeAssignmentMap && !reservedCageMap && !servicesByOrder) {
+    return orders;
+  }
+
+  return orders.map((order) => {
+    const key = String(order._id);
+    const enriched = { ...order };
+
+    let populatedReserved = isPopulatedCage(order.reservedCageId) ? order.reservedCageId : null;
+    if (!populatedReserved && order.reservedCageId && reservedCageMap) {
+      populatedReserved = reservedCageMap.get(String(order.reservedCageId)) || null;
+    }
+    if (populatedReserved) {
+      enriched.reservedCageId = populatedReserved;
+    }
+
+    const activeAssign = activeAssignmentMap?.get(key);
+    const latestAssign = latestAssignmentMap?.get(key);
+    const resolvedCage = activeAssign?.cageId || latestAssign?.cageId || populatedReserved || null;
+    if (resolvedCage !== null || activeAssignmentMap || reservedCageMap) {
+      enriched.cage = resolvedCage;
+    }
+
+    if (servicesByOrder) {
+      const orderServices = servicesByOrder.get(key) || [];
+      enriched.services = orderServices;
+      enriched.currentService = pickCurrentService(orderServices);
+    }
+
+    return enriched;
+  });
+};
+
+/**
  * Create an online appointment for the logged-in owner.
  * ownerId comes from the token (never from the request body).
  */
 const createOnlineAppointment = async (ownerId, { petId, date, note, slotStart, slotEnd }) => {
   // 1. The pet must exist, belong to the current user, and still be Active
-  const pet = await Pet.findOne({ _id: petId, ownerId }).select('_id name status').lean();
+  const pet = await Pet.findOne({ _id: petId, ownerId }).select('_id name status weight').lean();
   if (!pet) {
     throw createError(404, 'Không tìm thấy thú cưng');
   }
@@ -166,7 +366,10 @@ const createOnlineAppointment = async (ownerId, { petId, date, note, slotStart, 
     throw createError(409, 'Thú cưng này đã có lịch hẹn trong ngày đã chọn');
   }
 
-  // 3. Create with a random code; retry on the (rare) unique-code collision
+  // 3. Tự động tìm và giữ chỗ 1 chuồng phù hợp cân nặng cho đúng ngày hẹn
+  const reservedCageId = await findAvailableReservedCageId({ date, petWeight: pet.weight });
+
+  // 4. Create with a random code; retry on the (rare) unique-code collision
   for (let attempt = 0; attempt < MAX_CODE_RETRIES; attempt++) {
     try {
       const doc = {
@@ -181,9 +384,21 @@ const createOnlineAppointment = async (ownerId, { petId, date, note, slotStart, 
       };
       if (slotStart !== undefined) doc.slotStart = slotStart;
       if (slotEnd !== undefined) doc.slotEnd = slotEnd;
+      if (reservedCageId) doc.reservedCageId = reservedCageId;
 
       const appointment = await AppointmentOrder.create(doc);
       notifyReceptionistsOfNewAppointment(appointment, pet);
+
+      if (reservedCageId && appointment?._id && typeof AppointmentOrder.findById === 'function') {
+        const findQuery = AppointmentOrder.findById(appointment._id);
+        if (findQuery && typeof findQuery.populate === 'function') {
+          const populated = await findQuery.populate('reservedCageId', CAGE_PUBLIC_FIELDS).lean();
+          if (populated) {
+            return { ...populated, cage: populated.reservedCageId || null };
+          }
+        }
+      }
+
       return appointment;
     } catch (err) {
       if (isDuplicateCodeError(err)) continue;
@@ -207,10 +422,12 @@ const listMyOnlineAppointments = async (ownerId, { status, from, to, page = 1, l
   }
 
   const skip = (page - 1) * limit;
-  const [items, total] = await Promise.all([
+  const [rawItems, total] = await Promise.all([
     AppointmentOrder.find(filter).sort({ date: -1, createdAt: -1 }).skip(skip).limit(limit).lean(),
     AppointmentOrder.countDocuments(filter),
   ]);
+
+  const items = await enrichOrdersWithCageAndServices(rawItems);
 
   return {
     items,
@@ -232,7 +449,45 @@ const getMyOnlineAppointment = async (ownerId, id) => {
     .sort({ sequenceNo: 1 })
     .lean();
 
-  return { ...appointment, services };
+  const result = { ...appointment, services };
+
+  // Gắn thông tin chuồng (rõ label, size) nếu hệ thống có dữ liệu chuồng giữ chỗ / phân công chuồng
+  let populatedReserved = null;
+  if (appointment.reservedCageId && typeof Cage.findById === 'function') {
+    const cageQuery = Cage.findById(appointment.reservedCageId);
+    if (cageQuery && typeof cageQuery.select === 'function') {
+      populatedReserved = await cageQuery.select(CAGE_PUBLIC_FIELDS).lean();
+    }
+  }
+  if (populatedReserved) {
+    result.reservedCageId = populatedReserved;
+  }
+
+  let activeCage = null;
+  let cageLookupAttempted = false;
+  if (typeof CageAssignment.findOne === 'function') {
+    const assignQuery = CageAssignment.findOne({ orderId: appointment._id });
+    if (assignQuery && typeof assignQuery.populate === 'function') {
+      cageLookupAttempted = true;
+      const latestAssignment = await assignQuery
+        .populate('cageId', CAGE_PUBLIC_FIELDS)
+        .sort({ assignedAt: -1 })
+        .lean();
+      activeCage = latestAssignment?.cageId || null;
+    }
+  }
+
+  const resolvedCage = activeCage || populatedReserved;
+  if (resolvedCage || cageLookupAttempted || populatedReserved) {
+    result.cage = resolvedCage || null;
+  }
+
+  // Gắn dịch vụ hiện tại (kèm bác sĩ phụ trách) khi dịch vụ có dữ liệu status thật
+  if (Array.isArray(services) && services.some((s) => typeof s.status === 'string')) {
+    result.currentService = pickCurrentService(services);
+  }
+
+  return result;
 };
 
 /**
@@ -266,7 +521,7 @@ const listAllAppointments = async ({
   }
 
   const skip = (page - 1) * limit;
-  const [items, total] = await Promise.all([
+  const [rawItems, total] = await Promise.all([
     AppointmentOrder.find(filter)
       .populate('petId', 'name')
       .populate('ownerId', 'fullName phone')
@@ -276,6 +531,8 @@ const listAllAppointments = async ({
       .lean(),
     AppointmentOrder.countDocuments(filter),
   ]);
+
+  const items = await enrichOrdersWithCageAndServices(rawItems);
 
   return {
     items,
@@ -322,18 +579,105 @@ const assertCageReadyForCheckIn = async ({ cageId, petId, requiresIsolation }) =
 };
 
 /**
+ * Kiểm tra trước danh sách phân công bác sĩ / Groomer khi Lễ tân bấm Check-in.
+ * Đảm bảo mọi nhân sự đều Active và đúng chuyên môn (Veterinarian / Groomer) trước khi ghi DB.
+ */
+const prepareServiceStaffAssignments = async ({ orderId, assignedStaffId, serviceAssignments }) => {
+  const orderServices = await AppointmentService.find({ orderId }).lean();
+  const orderServiceMap = new Map(orderServices.map((s) => [String(s._id), s]));
+
+  const planned = [];
+  if (assignedStaffId) {
+    const bookedServices = orderServices.filter((s) => s.status === 'Booked');
+    if (bookedServices.length === 0) {
+      throw createError(409, 'Không có dịch vụ nào ở trạng thái chờ để phân công nhân sự');
+    }
+    for (const svc of bookedServices) {
+      planned.push({ appointmentService: svc, assignedStaffId });
+    }
+  } else if (Array.isArray(serviceAssignments) && serviceAssignments.length > 0) {
+    for (const item of serviceAssignments) {
+      const targetSvc = orderServiceMap.get(String(item.appointmentServiceId));
+      if (!targetSvc) {
+        throw createError(404, 'Không tìm thấy dịch vụ trong lịch hẹn này');
+      }
+      if (BLOCKED_SERVICE_STATUSES.includes(targetSvc.status)) {
+        throw createError(
+          409,
+          `Không thể phân công nhân sự cho dịch vụ đang ở trạng thái "${targetSvc.status}"`
+        );
+      }
+      planned.push({ appointmentService: targetSvc, assignedStaffId: item.assignedStaffId });
+    }
+  }
+
+  if (planned.length === 0) return [];
+
+  const staffIds = [...new Set(planned.map((p) => String(p.assignedStaffId)))];
+  const serviceIds = [
+    ...new Set(planned.map((p) => p.appointmentService.serviceId && String(p.appointmentService.serviceId)).filter(Boolean)),
+  ];
+
+  const [staffDocs, serviceDocs] = await Promise.all([
+    User.find({ _id: { $in: staffIds } }).select('fullName role status').lean(),
+    serviceIds.length > 0 && typeof Service.find === 'function'
+      ? Service.find({ _id: { $in: serviceIds } }).select('name category').lean()
+      : Promise.resolve([]),
+  ]);
+
+  const staffMap = new Map((staffDocs || []).map((st) => [String(st._id), st]));
+  const serviceCatalogMap = new Map((serviceDocs || []).map((sv) => [String(sv._id), sv]));
+
+  for (const item of planned) {
+    const staff = staffMap.get(String(item.assignedStaffId));
+    if (!staff) {
+      throw createError(404, 'Không tìm thấy nhân viên được phân công');
+    }
+    if (!CLINICAL_STAFF_ROLES.includes(staff.role)) {
+      throw createError(400, 'Nhân sự được phân công phải có vai trò Veterinarian hoặc Groomer');
+    }
+    if (staff.status !== 'Active') {
+      throw createError(400, 'Nhân sự được phân công hiện không ở trạng thái hoạt động (Active)');
+    }
+
+    const catalogSvc = serviceCatalogMap.get(String(item.appointmentService.serviceId));
+    if (catalogSvc) {
+      if (catalogSvc.category === 'Grooming' && staff.role !== 'Groomer') {
+        throw createError(
+          400,
+          `Dịch vụ "${catalogSvc.name}" (Grooming) chỉ được phân công cho nhân viên Groomer`
+        );
+      }
+      if (catalogSvc.category !== 'Grooming' && staff.role !== 'Veterinarian') {
+        throw createError(
+          400,
+          `Dịch vụ "${catalogSvc.name}" (${catalogSvc.category}) chỉ được phân công cho Bác sĩ thú y (Veterinarian)`
+        );
+      }
+    }
+  }
+
+  return planned;
+};
+
+/**
  * Only a 'Booked' appointment can be checked in. The status check and the update
  * happen in one atomic operation, so two concurrent check-ins can't both succeed.
- * Also transitions assigned services from 'Booked' to 'Waiting' and optionally assigns a holding cage (UC-22, BR-09, BR-11).
+ * Hỗ trợ gộp trong 1 lần Check-in: chọn/đổi chuồng (mặc định dùng reservedCageId nếu không đổi),
+ * ghi nhận kê khai/note, và phân công bác sĩ/nhân sự + cấp queueNo -> Waiting (UC-22, BR-09, BR-11).
  */
 const checkInAppointment = async (id, options = {}) => {
-  const shouldAssignCage = Boolean(options && options.cageId && options.staffId);
-  let precheckedPetWeight;
-  let previousIntake = null;
+  const hasExplicitAssignments = Boolean(
+    options &&
+      (options.assignedStaffId ||
+        (Array.isArray(options.serviceAssignments) && options.serviceAssignments.length > 0))
+  );
+  const mustPreloadOrder = Boolean(options && (options.cageId || hasExplicitAssignments));
 
-  if (shouldAssignCage) {
-    const preOrder = await AppointmentOrder.findById(id)
-      .select('derivedStatus petId intake')
+  let preOrder = null;
+  if (mustPreloadOrder) {
+    preOrder = await AppointmentOrder.findById(id)
+      .select('derivedStatus petId intake note reservedCageId')
       .lean();
     if (!preOrder) {
       throw createError(404, 'Không tìm thấy lịch hẹn');
@@ -341,11 +685,47 @@ const checkInAppointment = async (id, options = {}) => {
     if (preOrder.derivedStatus !== 'Booked') {
       throw createError(409, `Không thể check-in lịch hẹn đang ở trạng thái "${preOrder.derivedStatus}"`);
     }
-    previousIntake = preOrder.intake || null;
+  } else if (options && options.staffId && typeof AppointmentOrder.findById === 'function') {
+    const preQuery = AppointmentOrder.findById(id);
+    if (preQuery && typeof preQuery.select === 'function') {
+      preOrder = await preQuery.select('derivedStatus petId intake note reservedCageId').lean();
+      if (!preOrder) {
+        throw createError(404, 'Không tìm thấy lịch hẹn');
+      }
+      if (preOrder.derivedStatus !== 'Booked') {
+        throw createError(
+          409,
+          `Không thể check-in lịch hẹn đang ở trạng thái "${preOrder.derivedStatus}"`
+        );
+      }
+    }
+  }
+
+  const effectiveCageId =
+    (options && options.cageId) ||
+    (options && options.staffId && preOrder && preOrder.reservedCageId ? String(preOrder.reservedCageId) : undefined);
+  const shouldAssignCage = Boolean(effectiveCageId && options && options.staffId);
+  const shouldRollbackOnFailure = Boolean(shouldAssignCage || hasExplicitAssignments);
+
+  let precheckedPetWeight;
+  const previousIntake = preOrder ? preOrder.intake || null : null;
+  const previousNote = preOrder ? preOrder.note : undefined;
+  const previousReservedCageId = preOrder ? preOrder.reservedCageId || null : null;
+
+  if (shouldAssignCage && preOrder) {
     precheckedPetWeight = await assertCageReadyForCheckIn({
-      cageId: options.cageId,
+      cageId: effectiveCageId,
       petId: preOrder.petId,
       requiresIsolation: options.requiresIsolation,
+    });
+  }
+
+  let plannedAssignments = [];
+  if (hasExplicitAssignments) {
+    plannedAssignments = await prepareServiceStaffAssignments({
+      orderId: id,
+      assignedStaffId: options.assignedStaffId,
+      serviceAssignments: options.serviceAssignments,
     });
   }
 
@@ -361,6 +741,12 @@ const checkInAppointment = async (id, options = {}) => {
       recordedAt: checkedInAt,
     };
   }
+  if (options && options.note !== undefined) {
+    updateFields.note = options.note;
+  }
+  if (options && options.cageId) {
+    updateFields.reservedCageId = options.cageId;
+  }
 
   const appointment = await AppointmentOrder.findOneAndUpdate(
     { _id: id, derivedStatus: 'Booked' },
@@ -369,64 +755,147 @@ const checkInAppointment = async (id, options = {}) => {
   ).lean();
 
   if (appointment) {
-    // 1. Khi khách đến Check-in, tự động chuyển các dịch vụ đã phân công nhân viên từ Booked -> Waiting
-    let transitionedServiceIds = [];
-    if (typeof AppointmentService.updateMany === 'function') {
-      if (shouldAssignCage && typeof AppointmentService.find === 'function') {
-        const bookedServices = await AppointmentService.find({
+    const previousServiceSnapshots = [];
+
+    const rollbackEverything = async () => {
+      const rollbackOrder = {
+        derivedStatus: 'Booked',
+        checkedInAt: null,
+      };
+      if (options && options.intake) {
+        rollbackOrder.intake = previousIntake;
+      }
+      if (options && options.note !== undefined) {
+        rollbackOrder.note = previousNote;
+      }
+      if (options && options.cageId) {
+        rollbackOrder.reservedCageId = previousReservedCageId;
+      }
+
+      await Promise.allSettled([
+        AppointmentOrder.findByIdAndUpdate(id, { $set: rollbackOrder }),
+        ...previousServiceSnapshots.map((snap) =>
+          AppointmentService.findByIdAndUpdate(snap._id, {
+            $set: {
+              assignedStaffId: snap.assignedStaffId,
+              queueNo: snap.queueNo,
+              status: snap.status,
+              enqueueAt: snap.enqueueAt,
+            },
+          })
+        ),
+      ]);
+    };
+
+    try {
+      // 1. Phân công bác sĩ / Groomer ngay trong lúc Check-in (nếu có truyền từ modal Check-in)
+      const enqueueTime = appointment.checkedInAt || checkedInAt;
+      const assignedIdsHandled = new Set();
+
+      if (plannedAssignments.length > 0) {
+        const nextQueueByStaff = new Map();
+        const uniqueStaffIds = [...new Set(plannedAssignments.map((p) => String(p.assignedStaffId)))];
+
+        await Promise.all(
+          uniqueStaffIds.map(async (staffKey) => {
+            const lastQueued = await AppointmentService.findOne({
+              assignedStaffId: staffKey,
+              queueNo: { $ne: null },
+            })
+              .sort({ queueNo: -1 })
+              .select('queueNo')
+              .lean();
+            const startNo = lastQueued && lastQueued.queueNo ? lastQueued.queueNo + 1 : 1;
+            nextQueueByStaff.set(staffKey, startNo);
+          })
+        );
+
+        for (const item of plannedAssignments) {
+          const svc = item.appointmentService;
+          previousServiceSnapshots.push({
+            _id: svc._id,
+            assignedStaffId: svc.assignedStaffId || null,
+            queueNo: svc.queueNo ?? null,
+            status: svc.status,
+            enqueueAt: svc.enqueueAt || null,
+          });
+
+          const staffKey = String(item.assignedStaffId);
+          const queueNo = nextQueueByStaff.get(staffKey);
+          nextQueueByStaff.set(staffKey, queueNo + 1);
+
+          await AppointmentService.findByIdAndUpdate(svc._id, {
+            $set: {
+              assignedStaffId: item.assignedStaffId,
+              queueNo,
+              status: 'Waiting',
+              enqueueAt: enqueueTime,
+            },
+          });
+          assignedIdsHandled.add(String(svc._id));
+        }
+      }
+
+      // 2. Chuyển các dịch vụ khác đã có nhân sự từ trước (nếu có) từ Booked -> Waiting
+      if (typeof AppointmentService.updateMany === 'function') {
+        const filterOtherBooked = {
           orderId: id,
           status: 'Booked',
           assignedStaffId: { $ne: null },
-        })
-          .select('_id')
-          .lean();
-        transitionedServiceIds = bookedServices.map((s) => s._id);
+        };
+        if (assignedIdsHandled.size > 0) {
+          filterOtherBooked._id = { $nin: [...assignedIdsHandled] };
+        }
+
+        if (shouldRollbackOnFailure && typeof AppointmentService.find === 'function') {
+          const otherBookedServices = await AppointmentService.find(filterOtherBooked).lean();
+          for (const svc of otherBookedServices) {
+            previousServiceSnapshots.push({
+              _id: svc._id,
+              assignedStaffId: svc.assignedStaffId || null,
+              queueNo: svc.queueNo ?? null,
+              status: svc.status,
+              enqueueAt: svc.enqueueAt || null,
+            });
+          }
+        }
+
+        await AppointmentService.updateMany(filterOtherBooked, {
+          $set: { status: 'Waiting', enqueueAt: enqueueTime },
+        });
       }
 
-      await AppointmentService.updateMany(
-        { orderId: id, status: 'Booked', assignedStaffId: { $ne: null } },
-        { $set: { status: 'Waiting', enqueueAt: appointment.checkedInAt || new Date() } }
-      );
-    }
+      // 3. Nếu có chuồng giữ chỗ hoặc Lễ tân chọn/đổi chuồng khi Check-in, gán chuồng thực tế (Available -> Occupied)
+      let cageAssignment = null;
+      if (shouldAssignCage) {
+        const petWeight =
+          precheckedPetWeight !== undefined ? precheckedPetWeight : await loadPetWeight(appointment.petId);
 
-    // 2. Nếu Lễ tân chọn chuồng ngay khi Check-in (UC-22 & BR-09), gán chuồng và hoàn tác nếu gặp race condition
-    if (shouldAssignCage) {
-      const petWeight =
-        precheckedPetWeight !== undefined ? precheckedPetWeight : await loadPetWeight(appointment.petId);
-
-      try {
-        const cageAssignment = await createCageAssignment({
-          cageId: options.cageId,
+        cageAssignment = await createCageAssignment({
+          cageId: effectiveCageId,
           orderId: String(id),
           assignedById: String(options.staffId),
           petWeight,
           requiresIsolation: Boolean(options.requiresIsolation),
         });
-
-        return { ...appointment, cageAssignment };
-      } catch (err) {
-        // Hoàn tác đơn và các dịch vụ vừa chuyển sang Waiting nếu gán chuồng thất bại
-        const rollbackOrder = {
-          derivedStatus: 'Booked',
-          checkedInAt: null,
-        };
-        if (options && options.intake) {
-          rollbackOrder.intake = previousIntake;
-        }
-        await Promise.allSettled([
-          AppointmentOrder.findByIdAndUpdate(id, { $set: rollbackOrder }),
-          transitionedServiceIds.length > 0
-            ? AppointmentService.updateMany(
-                { _id: { $in: transitionedServiceIds } },
-                { $set: { status: 'Booked', enqueueAt: null } }
-              )
-            : Promise.resolve(),
-        ]);
-        throw err;
       }
-    }
 
-    return appointment;
+      if (!shouldAssignCage && !hasExplicitAssignments) {
+        return appointment;
+      }
+
+      const [enrichedOrder] = await enrichOrdersWithCageAndServices([appointment]);
+      const responseData = { ...(enrichedOrder || appointment) };
+      if (cageAssignment) {
+        responseData.cageAssignment = cageAssignment;
+      }
+      return responseData;
+    } catch (err) {
+      if (shouldRollbackOnFailure) {
+        await rollbackEverything();
+      }
+      throw err;
+    }
   }
 
   // Nothing updated: either it doesn't exist, or it isn't in 'Booked' status

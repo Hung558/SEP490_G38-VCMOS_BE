@@ -554,10 +554,10 @@
   }
   ```
 - **Kết quả mong đợi**:
-  - `201 Created`: Tạo đơn hẹn mã `APT-XXXXXX` (`derivedStatus: "Booked"`, `isOnline: true`), tạo danh sách dịch vụ đi kèm (`sequenceNo: 1, 2...`) và gửi email thông báo cho các Lễ tân đang `Active`.
+  - `201 Created`: Tạo đơn hẹn mã `APT-XXXXXX` (`derivedStatus: "Booked"`, `isOnline: true`), tạo danh sách dịch vụ đi kèm (`sequenceNo: 1, 2...`), tự động giữ 1 chuồng phù hợp cân nặng thú cưng theo **đúng ngày hẹn** vào `reservedCageId` (populate kèm `label`, `size`, `maxWeightKg`, `zone`, `isIsolated`, `status` và trả thêm field `cage`) nhưng **chưa đổi** `Cage.status` sang `"Occupied"` để không chặn các ngày khác, đồng thời gửi email thông báo cho các Lễ tân đang `Active`.
     - Nếu có gửi `slotStart` (ví dụ `"09:00"`, nằm trong giờ làm việc `08:00` – `18:00`): BE tự động cộng nối tiếp thời lượng `defaultDuration` của từng dịch vụ (mặc định 30 phút nếu trống) để tính `scheduledStart`, `scheduledEnd` cho từng dịch vụ và `slotEnd` cho đơn tổng.
   - `400 Bad Request`: `slotStart` sai định dạng `HH:mm`, nằm ngoài khung giờ `08:00` – `18:00`, ở trong quá khứ (nếu đặt ngày hôm nay), hoặc tổng thời lượng dịch vụ vượt quá giờ đóng cửa `18:00`.
-  - `409 Conflict`: Thú cưng đã có lịch hẹn trong ngày đã chọn.
+  - `409 Conflict`: Thú cưng đã có lịch hẹn trong ngày đã chọn, hoặc hết chuồng phù hợp cân nặng trống trong ngày đó.
 
 *(Lưu ý: Nếu muốn tách rời 2 bước thì gọi `POST /api/appointment-orders/online` tạo đơn trước, sau đó gọi `POST /api/appointment-services/online` để thêm từng dịch vụ).*
 
@@ -572,6 +572,8 @@
   - **Method**: `GET`
   - **URL**: `http://localhost:9999/api/appointment-orders/me/:id`
   - **Auth**: 🔒 Chỉ `PetOwner`
+- **Kết quả mong đợi**:
+  - `200 OK`: Mỗi đơn trả về luôn có `cage` (ưu tiên chuồng đang nhốt thực tế khi đã Check-in, nếu chưa Check-in thì lấy từ chuồng giữ chỗ `reservedCageId`, đủ mã `label` + kích cỡ `size`), `reservedCageId`, `services` (mảng dịch vụ kèm `assignedStaffId`), và `currentService` (dịch vụ hiện tại ưu tiên `InProgress → Waiting → Booked → Done cuối`; trước khi Check-in thì `assignedStaffId` là `null`).
 
 ---
 
@@ -581,7 +583,7 @@
 - **Auth**: 🔒 `Receptionist` hoặc `Admin`
 - **Query tùy chọn**: `status`, `isOnline`, `code`, `ownerId`, `petId`, `from`, `to`, `page`, `limit`.
 - **Kết quả mong đợi**:
-  - `200 OK`: Trả về danh sách đơn hẹn đã populate sẵn tên thú cưng (`petId.name`) và họ tên + SĐT chủ nuôi (`ownerId.fullName`, `ownerId.phone`).
+  - `200 OK`: Trả về danh sách đơn hẹn đã populate sẵn tên thú cưng (`petId.name`, `petId.weight`), họ tên + SĐT chủ nuôi (`ownerId.fullName`, `ownerId.phone`), thông tin chuồng (`cage`, `reservedCageId`), `services` và `currentService`.
 
 ---
 
@@ -589,21 +591,33 @@
 - **Method**: `PATCH`
 - **URL**: `http://localhost:9999/api/appointment-orders/:id/check-in`
 - **Auth**: 🔒 Chỉ `Receptionist`
-- **Body (`JSON` tùy chọn)**:
+- **Body (`JSON` gộp 3 trong 1: Chuồng + Ghi chú/Tình trạng ban đầu + Phân công nhân sự)**:
   ```json
   {
-    "cageId": "<id_chuồng_trống_nếu_muốn_gán_ngay>",
-    "requiresIsolation": false
+    "cageId": "<id_chuồng_tùy_chọn_nếu_muốn_đổi_khác_chuồng_đã_giữ>",
+    "requiresIsolation": false,
+    "note": "Ghi chú tiếp đón của lễ tân (tùy chọn)",
+    "intake": {
+      "symptoms": "Biểu hiện lâm sàng ban đầu (tùy chọn)",
+      "initialCondition": "Tình trạng lúc đến (tùy chọn)"
+    },
+    "assignedStaffId": "<id_Bác_sĩ_hoặc_Groomer_nếu_gán_chung_cho_các_dịch_vụ>",
+    "serviceAssignments": [
+      {
+        "appointmentServiceId": "<id_dịch_vụ>",
+        "assignedStaffId": "<id_Bác_sĩ_hoặc_Groomer_tương_ứng>"
+      }
+    ]
   }
   ```
-  *(Nếu khách tự bế thú cưng ngồi chờ ở phòng khách thì gửi body rỗng `{}`)*.
+  *(Lưu ý: Nếu không truyền `cageId`, hệ thống mặc định cho thú cưng vào đúng chuồng `reservedCageId` đã giữ sẵn lúc đặt lịch. Có thể truyền `assignedStaffId` dùng chung khi đơn chỉ có 1 dịch vụ hoặc cùng nhóm vai trò, hoặc truyền `serviceAssignments` / `services` để gán riêng cho từng dịch vụ).*
 - **Kết quả mong đợi**:
   - `200 OK`: 
-    - Chuyển `derivedStatus` từ `"Booked"` sang **`"CheckedIn"`** và ghi nhận thời gian `checkedInAt`.
-    - Tự động chuyển các dịch vụ đã phân công nhân sự sang **`"Waiting"`** để vào hàng đợi khám.
-    - Nếu có truyền `cageId`: Kiểm tra tải trọng chuồng theo cân nặng thú cưng (`BR-11`: S $\le$ 5kg, M $\le$ 15kg, L $\le$ 30kg, XL > 30kg) và cờ cách ly, sau đó tự động gán chuồng sang `"Occupied"`.
-  - `400 Bad Request`: Chuồng chọn không đủ kích cỡ chứa thú cưng hoặc không khớp cờ cách ly (`BR-11`).
-  - `409 Conflict`: Nếu đơn hẹn đã check-in rồi hoặc đang ở trạng thái khác `"Booked"`.
+    - Chuyển `derivedStatus` từ `"Booked"` sang **`"CheckedIn"`**, lưu `checkedInAt`, `note` (nếu truyền) và `intake` (nếu truyền).
+    - Tự động gán nhân sự cho dịch vụ (kiểm tra `Active` và khớp vai trò `Veterinarian` / `Groomer`), chuyển các dịch vụ đã có nhân sự sang **`"Waiting"`**, tự động cấp `queueNo` và ghi `enqueueAt`.
+    - Kiểm tra tải trọng chuồng theo cân nặng thú cưng (`BR-11`: S $\le$ 5kg, M $\le$ 15kg, L $\le$ 30kg, XL > 30kg) và cờ cách ly (`requiresIsolation`), tạo `CageAssignment` và đổi `Cage.status` sang `"Occupied"`.
+  - `400 Bad Request`: Chuồng chọn không đủ kích cỡ/không khớp cờ cách ly (`BR-11`), thiếu chuồng để Check-in, hoặc nhân sự không hợp lệ/sai vai trò dịch vụ.
+  - `409 Conflict`: Nếu đơn hẹn đã check-in rồi, đang ở trạng thái khác `"Booked"`, hoặc chuồng vừa bị thú cưng khác chiếm.
 
 ---
 
@@ -616,7 +630,7 @@
 
 ---
 
-### 8.6. `Receptionist` phân công Bác sĩ / Groomer cho dịch vụ khám (`SCR-16`)
+### 8.6. `Receptionist` phân công hoặc đổi Bác sĩ / Groomer cho dịch vụ sau Check-in (`SCR-16`)
 - **Method**: `PATCH`
 - **URL**: `http://localhost:9999/api/appointment-services/:id/assign-staff`
 - **Auth**: 🔒 Chỉ `Receptionist`
@@ -627,8 +641,9 @@
   }
   ```
 - **Kết quả mong đợi**:
-  - `200 OK`: Gán `assignedStaffId` cho dịch vụ. Nếu đơn hẹn đã `CheckedIn`, dịch vụ tự động chuyển `status` sang **`"Waiting"`**, tự động cấp số thứ tự hàng đợi `queueNo` và ghi nhận thời điểm `enqueueAt`.
+  - `200 OK`: Gán hoặc đổi `assignedStaffId` cho dịch vụ (dùng cho trường hợp đổi nhân sự hoặc gán nhân sự cho dịch vụ phát sinh thêm sau khi đã Check-in). Dịch vụ tự động chuyển `status` sang **`"Waiting"`**, tự động cấp số thứ tự hàng đợi `queueNo` và ghi nhận thời điểm `enqueueAt`.
   - `400 Bad Request`: Nếu nhân sự không phải `Veterinarian` / `Groomer` hoặc không ở trạng thái `Active`.
+  - `409 Conflict`: Nếu đơn hẹn đang ở trạng thái `"Booked"` (chưa Check-in — phải phân công tại bước Check-in) hoặc đơn/dịch vụ không còn ở trạng thái cho phép phân công.
 
 ---
 

@@ -154,14 +154,14 @@ describe('createOnlineAppointment', () => {
       expect(AppointmentOrder.create).not.toHaveBeenCalled();
     });
 
-    it('only selects _id, name, and status of the pet (name for email, status to block Deleted pets)', async () => {
-      const { select } = mockPetFindOne({ _id: PET_ID, name: 'Milu', status: 'Active' });
+    it('selects _id, name, status and weight of the pet (weight to auto-reserve cage by size)', async () => {
+      const { select } = mockPetFindOne({ _id: PET_ID, name: 'Milu', status: 'Active', weight: 6 });
       AppointmentOrder.exists.mockResolvedValue(null);
       AppointmentOrder.create.mockResolvedValue({});
 
       await service.createOnlineAppointment(OWNER_ID, input);
 
-      expect(select).toHaveBeenCalledWith('_id name status');
+      expect(select).toHaveBeenCalledWith('_id name status weight');
     });
 
     it('throws 400 when the pet has been soft-deleted (status = Deleted)', async () => {
@@ -1280,8 +1280,8 @@ describe('checkInAppointment', () => {
 
     it('propagates errors thrown by the follow-up lookup', async () => {
       mockFindOneAndUpdate(null);
-      const lean = jest.fn().mockRejectedValue(new Error('db down'));
-      AppointmentOrder.findById.mockReturnValue({ select: jest.fn().mockReturnValue({ lean }) });
+      const lean = jest.fn().mockRejectedValueOnce(new Error('db down'));
+      AppointmentOrder.findById.mockReturnValueOnce({ select: jest.fn().mockReturnValueOnce({ lean }) });
 
       await expect(service.checkInAppointment(APPOINTMENT_ID)).rejects.toThrow('db down');
     });
@@ -1289,6 +1289,7 @@ describe('checkInAppointment', () => {
 
   describe('with receptionist intake assessment', () => {
     it('stores intake symptoms, initialCondition, recordedBy, and recordedAt in $set', async () => {
+      AppointmentOrder.findById.mockReset();
       const staffId = '64f100000000000000000099';
       const checked = {
         _id: APPOINTMENT_ID,

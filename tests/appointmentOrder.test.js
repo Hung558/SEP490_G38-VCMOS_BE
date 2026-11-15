@@ -142,12 +142,12 @@ describe('Appointment Symptom Note & Reception Check-in Intake Flow', () => {
     expect(res.body.data.appointment.intake).toBeNull();
   });
 
-  test('3. Lễ tân phân công bác sĩ và check-in thất bại (400) nếu gửi intake rỗng hoặc vượt 500 ký tự', async () => {
-    const assignRes = await request(app)
+  test('3. Chặn phân công bác sĩ khi đơn còn Booked (409) và check-in thất bại (400) nếu gửi intake rỗng hoặc vượt 500 ký tự', async () => {
+    const assignBeforeCheckInRes = await request(app)
       .patch(`/api/appointment-services/${onlineServiceId}/assign-staff`)
       .set('Authorization', `Bearer ${receptionistToken}`)
       .send({ assignedStaffId: vetUser._id });
-    expect(assignRes.status).toBe(200);
+    expect(assignBeforeCheckInRes.status).toBe(409);
 
     const blankRes = await request(app)
       .patch(`/api/appointment-orders/${onlineOrderId}/check-in`)
@@ -184,11 +184,12 @@ describe('Appointment Symptom Note & Reception Check-in Intake Flow', () => {
     );
   });
 
-  test('4. Lễ tân check-in thành công với phiếu kê khai ban đầu (intake) và lưu đầy đủ vào DB', async () => {
+  test('4. Lễ tân check-in gộp phân công bác sĩ + phiếu kê khai ban đầu (intake) thành công và lưu đầy đủ vào DB', async () => {
     const res = await request(app)
       .patch(`/api/appointment-orders/${onlineOrderId}/check-in`)
       .set('Authorization', `Bearer ${receptionistToken}`)
       .send({
+        assignedStaffId: vetUser._id,
         intake: {
           symptoms: '  Ho khan từng cơn, chảy nước mũi trong  ',
           initialCondition: '  Tỉnh táo, hơi mệt, thân nhiệt 38.9 độ  ',
@@ -520,37 +521,43 @@ describe('Nhóm 1: Vá các lỗi logic đặt lịch, check-in, phân công, b�
     const step1ServiceId = bookingRes.body.data.services[0]._id;
     const step2ServiceId = bookingRes.body.data.services[1]._id;
 
-    // 1. Gán Bác sĩ cho dịch vụ Grooming -> bị chặn 400
-    const wrongRoleAssignRes = await request(app)
-      .patch(`/api/appointment-services/${step2ServiceId}/assign-staff`)
-      .set('Authorization', `Bearer ${receptionistToken}`)
-      .send({ assignedStaffId: vetUser._id });
-    expect(wrongRoleAssignRes.status).toBe(400);
-
-    // 2. Phân công đúng: Bác sĩ làm bước 1, Groomer làm bước 2
-    const assign1 = await request(app)
+    // 1. Chưa check-in (Booked) không được gọi assign-staff -> bị chặn 409
+    const assignBeforeCheckInRes = await request(app)
       .patch(`/api/appointment-services/${step1ServiceId}/assign-staff`)
       .set('Authorization', `Bearer ${receptionistToken}`)
       .send({ assignedStaffId: vetUser._id });
-    expect(assign1.status).toBe(200);
+    expect(assignBeforeCheckInRes.status).toBe(409);
 
-    const assign2 = await request(app)
-      .patch(`/api/appointment-services/${step2ServiceId}/assign-staff`)
-      .set('Authorization', `Bearer ${receptionistToken}`)
-      .send({ assignedStaffId: groomerUser._id });
-    expect(assign2.status).toBe(200);
-
-    // 3. Chưa check-in (status còn Booked) mà gọi start -> 409
+    // 2. Chưa check-in (chưa phân công bác sĩ) mà bác sĩ gọi start -> bị chặn 403
     const startBeforeCheckInRes = await request(app)
       .patch(`/api/appointment-services/${step1ServiceId}/start`)
       .set('Authorization', `Bearer ${vetToken}`);
-    expect(startBeforeCheckInRes.status).toBe(409);
+    expect(startBeforeCheckInRes.status).toBe(403);
 
-    // 4. Check-in vào chuồng nhỏ (petDoc 9kg <= 10kg)
+    // 3. Check-in gộp phân công sai chuyên môn (gán Bác sĩ cho Grooming) -> bị chặn 400 & không kẹt đơn/chuồng
+    const wrongRoleCheckInRes = await request(app)
+      .patch(`/api/appointment-orders/${orderId}/check-in`)
+      .set('Authorization', `Bearer ${receptionistToken}`)
+      .send({
+        cageId: smallCage._id,
+        serviceAssignments: [
+          { appointmentServiceId: step1ServiceId, assignedStaffId: vetUser._id },
+          { appointmentServiceId: step2ServiceId, assignedStaffId: vetUser._id },
+        ],
+      });
+    expect(wrongRoleCheckInRes.status).toBe(400);
+
+    // 4. Check-in gộp đầy đủ: chọn chuồng + phân công đúng Bác sĩ bước 1 & Groomer bước 2
     const checkInRes = await request(app)
       .patch(`/api/appointment-orders/${orderId}/check-in`)
       .set('Authorization', `Bearer ${receptionistToken}`)
-      .send({ cageId: smallCage._id });
+      .send({
+        cageId: smallCage._id,
+        serviceAssignments: [
+          { appointmentServiceId: step1ServiceId, assignedStaffId: vetUser._id },
+          { appointmentServiceId: step2ServiceId, assignedStaffId: groomerUser._id },
+        ],
+      });
     expect(checkInRes.status).toBe(200);
 
     // 5. Bác sĩ khác không được phân công gọi start -> 403
@@ -612,6 +619,238 @@ describe('Nhóm 1: Vá các lỗi logic đặt lịch, check-in, phân công, b�
     expect(updatedOrder.derivedStatus).toBe('Cancelled');
     expect(cageAfter.status).toBe('Available');
     expect(closedAssignment.releasedAt).toBeTruthy();
+  });
+
+  describe('Luồng mới: Giữ chuồng theo ngày khi book, Check-in gộp 3 bước và màn Quản lý lịch của khách', () => {
+    let secondOwner;
+    let secondOwnerToken;
+    let secondHeavyPet;
+
+    beforeAll(async () => {
+      const passwordHash = await bcrypt.hash('Test@123', 10);
+      secondOwner = await User.create({
+        code: 'USR-INT006',
+        fullName: 'Chủ Nuôi Thứ 2',
+        phone: '0911000006',
+        passwordHash,
+        role: 'PetOwner',
+        status: 'Active',
+      });
+      secondOwnerToken = signToken(secondOwner);
+      secondHeavyPet = await Pet.create({
+        code: 'PET-INT004',
+        ownerId: secondOwner._id,
+        name: 'Béo To',
+        species: 'Chó',
+        weight: 22,
+        status: 'Active',
+      });
+    });
+
+    test('Đặt lịch ngày 3 tự động giữ chuồng theo cân nặng, trả đủ label & size cho khách nhưng KHÔNG khóa chuồng ngày 4; hủy đơn ngày 3 thì nhả chỗ giữ', async () => {
+      const day3 = formatDateOffsetVN(10);
+      const day4 = formatDateOffsetVN(11);
+
+      // 1. Khách 1 đặt cho heavyPet (25kg) vào ngày 3 -> tự giữ largeCage (size L)
+      const bookDay3Res = await request(app)
+        .post('/api/appointment-services/online-booking')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          petId: heavyPet._id,
+          date: day3,
+          slotStart: '09:00',
+          note: 'Kiểm tra khớp chân sau',
+          services: [{ serviceId: medicalService._id }],
+        });
+
+      expect(bookDay3Res.status).toBe(201);
+      const orderDay3 = bookDay3Res.body.data.appointment;
+      expect(orderDay3.reservedCageId).toMatchObject({
+        _id: String(largeCage._id),
+        label: 'CAG-INT-L01',
+        size: 'L',
+      });
+
+      // Chuồng vật lý vẫn Available để các ngày khác dùng bình thường
+      const physicalCage = await Cage.findById(largeCage._id).lean();
+      expect(physicalCage.status).toBe('Available');
+
+      // 2. Khách 2 đặt cho secondHeavyPet (22kg) vào ngày 4 -> vẫn giữ được đúng largeCage!
+      const bookDay4Res = await request(app)
+        .post('/api/appointment-services/online-booking')
+        .set('Authorization', `Bearer ${secondOwnerToken}`)
+        .send({
+          petId: secondHeavyPet._id,
+          date: day4,
+          slotStart: '10:00',
+          services: [{ serviceId: medicalService._id }],
+        });
+      expect(bookDay4Res.status).toBe(201);
+      expect(bookDay4Res.body.data.appointment.reservedCageId).toMatchObject({
+        _id: String(largeCage._id),
+        label: 'CAG-INT-L01',
+        size: 'L',
+      });
+
+      // 3. Khách 1 xem danh sách & chi tiết lịch của mình ngay lúc Booked -> có chuồng (label + size), dịch vụ hiện tại, chưa có bác sĩ
+      const myListBeforeRes = await request(app)
+        .get('/api/appointment-orders/me')
+        .set('Authorization', `Bearer ${ownerToken}`);
+      expect(myListBeforeRes.status).toBe(200);
+      const myItemBefore = myListBeforeRes.body.data.find((o) => String(o._id) === String(orderDay3._id));
+      expect(myItemBefore.cage).toMatchObject({ label: 'CAG-INT-L01', size: 'L' });
+      expect(myItemBefore.currentService).toMatchObject({ status: 'Booked', assignedStaffId: null });
+
+      // 4. Nếu Khách 1 hủy đơn ngày 3, Khách 2 đặt lại ngày 3 sẽ nhận lại được đúng chuồng L đó
+      const cancelDay3Res = await request(app)
+        .patch(`/api/appointment-orders/${orderDay3._id}/cancel`)
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({ reason: 'Đổi lịch sang tuần sau' });
+      expect(cancelDay3Res.status).toBe(200);
+
+      const rebookDay3Res = await request(app)
+        .post('/api/appointment-services/online-booking')
+        .set('Authorization', `Bearer ${secondOwnerToken}`)
+        .send({
+          petId: secondHeavyPet._id,
+          date: day3,
+          slotStart: '11:00',
+          services: [{ serviceId: medicalService._id }],
+        });
+      expect(rebookDay3Res.status).toBe(201);
+      expect(rebookDay3Res.body.data.appointment.reservedCageId).toMatchObject({
+        _id: String(largeCage._id),
+        label: 'CAG-INT-L01',
+        size: 'L',
+      });
+    });
+
+    test('Check-in gộp 3 bước (mặc định dùng chuồng giữ chỗ hoặc đổi chuồng + cập nhật note + chọn bác sĩ) và hiển thị đủ trên GET /me, GET /me/:id', async () => {
+      const targetDate = formatDateOffsetVN(12);
+
+      // Tạo đơn cho petDoc (9kg): đặt lịch tự giữ chuồng nhỏ (smallCage: size S, maxWeightKg 10)
+      const bookRes = await request(app)
+        .post('/api/appointment-services/online-booking')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          petId: petDoc._id,
+          date: targetDate,
+          slotStart: '09:30',
+          note: 'Ghi chú ban đầu từ khách',
+          services: [{ serviceId: medicalService._id }],
+        });
+      expect(bookRes.status).toBe(201);
+      const orderId = bookRes.body.data.appointment._id;
+      const serviceId = bookRes.body.data.services[0]._id;
+      expect(bookRes.body.data.appointment.reservedCageId).toMatchObject({
+        _id: String(smallCage._id),
+        label: 'CAG-INT-S01',
+        size: 'S',
+      });
+
+      // Lễ tân Check-in: đổi sang chuồng lớn hơn (largeCage) + cập nhật note + chọn bác sĩ ngay trong 1 API
+      const checkInRes = await request(app)
+        .patch(`/api/appointment-orders/${orderId}/check-in`)
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({
+          cageId: largeCage._id,
+          note: 'Lễ tân ghi chú: bé hơi nhát, cần chuồng rộng hơn',
+          intake: {
+            symptoms: 'Ngứa tai phải',
+            initialCondition: 'Tỉnh táo, cân nặng 9kg',
+          },
+          serviceAssignments: [
+            { appointmentServiceId: serviceId, assignedStaffId: vetUser._id },
+          ],
+        });
+
+      expect(checkInRes.status).toBe(200);
+      expect(checkInRes.body.data.derivedStatus).toBe('CheckedIn');
+      expect(checkInRes.body.data.note).toBe('Lễ tân ghi chú: bé hơi nhát, cần chuồng rộng hơn');
+      expect(checkInRes.body.data.cage).toMatchObject({
+        _id: String(largeCage._id),
+        label: 'CAG-INT-L01',
+        size: 'L',
+      });
+      expect(checkInRes.body.data.currentService).toMatchObject({
+        status: 'Waiting',
+        assignedStaffId: expect.objectContaining({
+          _id: String(vetUser._id),
+          fullName: vetUser.fullName,
+        }),
+      });
+      expect(checkInRes.body.data.currentService.queueNo).toBeGreaterThanOrEqual(1);
+
+      // Chủ nuôi xem chi tiết & danh sách lịch -> thấy luôn chuồng mới, dịch vụ hiện tại và bác sĩ đã chọn
+      const [detailRes, listRes] = await Promise.all([
+        request(app)
+          .get(`/api/appointment-orders/me/${orderId}`)
+          .set('Authorization', `Bearer ${ownerToken}`),
+        request(app)
+          .get('/api/appointment-orders/me')
+          .set('Authorization', `Bearer ${ownerToken}`),
+      ]);
+
+      expect(detailRes.status).toBe(200);
+      expect(detailRes.body.data.cage).toMatchObject({
+        label: 'CAG-INT-L01',
+        size: 'L',
+      });
+      expect(detailRes.body.data.currentService).toMatchObject({
+        status: 'Waiting',
+        assignedStaffId: expect.objectContaining({ fullName: vetUser.fullName }),
+      });
+
+      expect(listRes.status).toBe(200);
+      const foundInList = listRes.body.data.find((o) => String(o._id) === String(orderId));
+      expect(foundInList.cage).toMatchObject({ label: 'CAG-INT-L01', size: 'L' });
+      expect(foundInList.currentService).toMatchObject({
+        status: 'Waiting',
+        assignedStaffId: expect.objectContaining({ fullName: vetUser.fullName }),
+      });
+
+      // Chuồng largeCage đang Occupied, giải phóng bằng cách hủy hoặc hoàn tất để giữ DB sạch
+      await request(app)
+        .patch(`/api/appointment-orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({ reason: 'Dọn dẹp test' });
+    });
+
+    test('Check-in không truyền cageId sẽ tự động gán vào chuồng đã giữ chỗ lúc book', async () => {
+      const targetDate = formatDateOffsetVN(13);
+
+      const bookRes = await request(app)
+        .post('/api/appointment-services/online-booking')
+        .set('Authorization', `Bearer ${ownerToken}`)
+        .send({
+          petId: petDoc._id,
+          date: targetDate,
+          slotStart: '10:30',
+          services: [{ serviceId: medicalService._id }],
+        });
+      expect(bookRes.status).toBe(201);
+      const orderId = bookRes.body.data.appointment._id;
+      const expectedReservedId = bookRes.body.data.appointment.reservedCageId._id;
+
+      const checkInRes = await request(app)
+        .patch(`/api/appointment-orders/${orderId}/check-in`)
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({
+          assignedStaffId: vetUser._id,
+        });
+
+      expect(checkInRes.status).toBe(200);
+      expect(checkInRes.body.data.cage).toMatchObject({ _id: expectedReservedId });
+      expect(checkInRes.body.data.cageAssignment).toBeTruthy();
+
+      const occupiedCage = await Cage.findById(expectedReservedId).lean();
+      expect(occupiedCage.status).toBe('Occupied');
+
+      await request(app)
+        .patch(`/api/appointment-orders/${orderId}/cancel`)
+        .set('Authorization', `Bearer ${receptionistToken}`)
+        .send({ reason: 'Dọn dẹp test' });
+    });
   });
 });
 

@@ -286,11 +286,11 @@ const validateIntakePayload = (rawIntake) => {
   };
 };
 
-// Kiểm tra dữ liệu lễ tân gửi khi Check-in (cageId, requiresIsolation, và phiếu kê khai ban đầu intake)
+// Kiểm tra dữ liệu lễ tân gửi khi Check-in (chuồng, kê khai/note, và phân công bác sĩ/nhân sự)
 const validateCheckInAppointment = (body = {}) => {
   const errors = [];
   const data = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
-  const { cageId, requiresIsolation, intake } = data;
+  const { cageId, requiresIsolation, intake, note, assignedStaffId, serviceAssignments, services } = data;
 
   let cleanCageId;
   if (!isBlank(cageId)) {
@@ -328,12 +328,102 @@ const validateCheckInAppointment = (body = {}) => {
     cleanIntake = intakeResult.value;
   }
 
+  let cleanNote;
+  if (note !== undefined && note !== null) {
+    if (typeof note !== 'string') {
+      errors.push({ field: 'note', message: 'Ghi chú phải là chuỗi' });
+    } else {
+      const trimmedNote = note.trim();
+      if (trimmedNote.length > NOTE_MAX_LENGTH) {
+        errors.push({ field: 'note', message: `Ghi chú tối đa ${NOTE_MAX_LENGTH} ký tự` });
+      } else {
+        cleanNote = trimmedNote;
+      }
+    }
+  }
+
+  let cleanAssignedStaffId;
+  if (!isBlank(assignedStaffId)) {
+    if (!isMongoId(String(assignedStaffId))) {
+      errors.push({ field: 'assignedStaffId', message: 'assignedStaffId không hợp lệ' });
+    } else {
+      cleanAssignedStaffId = String(assignedStaffId);
+    }
+  }
+
+  const rawAssignments = serviceAssignments !== undefined ? serviceAssignments : services;
+  const assignmentFieldName = serviceAssignments !== undefined ? 'serviceAssignments' : 'services';
+  let cleanServiceAssignments;
+
+  if (rawAssignments !== undefined && rawAssignments !== null) {
+    if (!Array.isArray(rawAssignments) || rawAssignments.length === 0) {
+      errors.push({
+        field: assignmentFieldName,
+        message: `${assignmentFieldName} phải là mảng không rỗng`,
+      });
+    } else {
+      const seenServiceIds = new Set();
+      cleanServiceAssignments = [];
+      for (let i = 0; i < rawAssignments.length; i++) {
+        const item = rawAssignments[i];
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          errors.push({
+            field: `${assignmentFieldName}[${i}]`,
+            message: 'Thông tin phân công dịch vụ không hợp lệ',
+          });
+          continue;
+        }
+
+        const itemServiceId = isBlank(item.appointmentServiceId) ? '' : String(item.appointmentServiceId);
+        const itemStaffId = isBlank(item.assignedStaffId) ? '' : String(item.assignedStaffId);
+
+        if (!isMongoId(itemServiceId)) {
+          errors.push({
+            field: `${assignmentFieldName}[${i}].appointmentServiceId`,
+            message: 'appointmentServiceId không hợp lệ',
+          });
+        } else if (seenServiceIds.has(itemServiceId)) {
+          errors.push({
+            field: `${assignmentFieldName}[${i}].appointmentServiceId`,
+            message: 'Dịch vụ bị trùng lặp trong danh sách phân công',
+          });
+        } else {
+          seenServiceIds.add(itemServiceId);
+        }
+
+        if (!isMongoId(itemStaffId)) {
+          errors.push({
+            field: `${assignmentFieldName}[${i}].assignedStaffId`,
+            message: 'assignedStaffId không hợp lệ',
+          });
+        }
+
+        if (isMongoId(itemServiceId) && isMongoId(itemStaffId)) {
+          cleanServiceAssignments.push({
+            appointmentServiceId: itemServiceId,
+            assignedStaffId: itemStaffId,
+          });
+        }
+      }
+    }
+  }
+
+  if (cleanAssignedStaffId && rawAssignments !== undefined && rawAssignments !== null) {
+    errors.push({
+      field: 'assignedStaffId',
+      message: 'Chỉ chọn một cách truyền: assignedStaffId chung hoặc danh sách serviceAssignments',
+    });
+  }
+
   return {
     errors,
     value: {
       cageId: cleanCageId,
       requiresIsolation: cleanRequiresIsolation,
       intake: cleanIntake,
+      note: cleanNote,
+      assignedStaffId: cleanAssignedStaffId,
+      serviceAssignments: cleanServiceAssignments,
     },
   };
 };

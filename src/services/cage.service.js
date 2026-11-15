@@ -87,6 +87,22 @@ const CAGE_MAX_WEIGHT_BY_SIZE = {
   XL: Infinity,
 };
 
+const CAGE_SIZE_ORDER = ['S', 'M', 'L', 'XL'];
+
+/**
+ * Thứ tự ưu tiên cỡ chuồng phù hợp theo cân nặng (chọn cỡ vừa vặn nhỏ nhất trước để tránh lãng phí chuồng lớn).
+ * Nếu chưa có cân nặng thì ưu tiên từ nhỏ đến lớn: S -> M -> L -> XL.
+ */
+function getPreferredCageSizeOrder(petWeight) {
+  if (typeof petWeight !== 'number' || !Number.isFinite(petWeight) || petWeight <= 0) {
+    return [...CAGE_SIZE_ORDER];
+  }
+  if (petWeight <= CAGE_MAX_WEIGHT_BY_SIZE.S) return ['S', 'M', 'L', 'XL'];
+  if (petWeight <= CAGE_MAX_WEIGHT_BY_SIZE.M) return ['M', 'L', 'XL'];
+  if (petWeight <= CAGE_MAX_WEIGHT_BY_SIZE.L) return ['L', 'XL'];
+  return ['XL'];
+}
+
 /**
  * Kiểm tra chuồng có phù hợp với cân nặng thú cưng và yêu cầu cách ly hay không (BR-11).
  * @param {string} cageSize - 'S' | 'M' | 'L' | 'XL'
@@ -134,6 +150,7 @@ function canCageAccommodatePet(
 module.exports = {
   ServiceError,
   CAGE_MAX_WEIGHT_BY_SIZE,
+  getPreferredCageSizeOrder,
   canCageAccommodatePet,
   createCage,
   getCages,
