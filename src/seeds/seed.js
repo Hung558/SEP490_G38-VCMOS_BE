@@ -52,7 +52,13 @@ const seed = async () => {
     dob: new Date('2023-05-01'), weight: 5.2, notes: 'Dị ứng hải sản',
   });
 
-  await StaffSchedule.create({ staffId: vet._id, workDate: TODAY, notes: 'Ca sáng' });
+  await StaffSchedule.create({
+    staffId: vet._id,
+    date: TODAY,
+    shift: 'EVENING',
+    reason: 'Báo bận mẫu ca tối',
+    createdBy: vet._id,
+  });
 
   const service = await Service.create({
     code: 'SRV-000001', name: 'Khám tổng quát', category: 'Examination', defaultDuration: 30, basePrice: 150000,

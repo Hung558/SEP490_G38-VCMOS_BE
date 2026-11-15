@@ -5,7 +5,7 @@ const MAX_TASK_TYPE_LENGTH = 200;
 const MAX_INSTRUCTIONS_LENGTH = 2000;
 const MAX_RESULT_TEXT_LENGTH = 3000;
 
-const CREATE_ALLOWED_FIELDS = ['appointmentServiceId', 'assignedStaffId', 'taskType', 'instructions'];
+const CREATE_ALLOWED_FIELDS = ['appointmentServiceId', 'serviceId', 'assignedStaffId', 'taskType', 'instructions'];
 const COMPLETE_ALLOWED_FIELDS = ['resultText'];
 
 const isBlank = (value) =>
@@ -61,6 +61,13 @@ const validateCreateSubtaskPayload = (body = {}) => {
   }
 
   if (
+    !isBlank(body.serviceId) &&
+    (typeof body.serviceId !== 'string' || !isValidObjectId(body.serviceId.trim()))
+  ) {
+    errors.serviceId = 'Mã dịch vụ (serviceId) không hợp lệ';
+  }
+
+  if (
     isBlank(body.assignedStaffId) ||
     typeof body.assignedStaffId !== 'string' ||
     !isValidObjectId(body.assignedStaffId.trim())
@@ -99,6 +106,7 @@ const validateCreateSubtaskPayload = (body = {}) => {
     errors: {},
     value: {
       appointmentServiceId: body.appointmentServiceId.trim(),
+      serviceId: !isBlank(body.serviceId) ? body.serviceId.trim() : null,
       assignedStaffId: body.assignedStaffId.trim(),
       taskType: cleanTaskType,
       instructions: cleanInstructions,

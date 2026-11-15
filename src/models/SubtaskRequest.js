@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const subtaskRequestSchema = new mongoose.Schema(
   {
     appointmentServiceId: { type: mongoose.Schema.Types.ObjectId, ref: 'AppointmentService', required: true },
+    serviceId: { type: mongoose.Schema.Types.ObjectId, ref: 'Service', default: null },
     requestedById: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     assignedStaffId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     taskType: String,

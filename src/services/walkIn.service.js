@@ -7,6 +7,9 @@ const AppointmentOrder = require('../models/AppointmentOrder');
 const AppointmentService = require('../models/AppointmentService');
 const { canCageAccommodatePet } = require('./cage.service');
 const { createCageAssignment } = require('./cageAssignment.service');
+const { resolveServiceRequiredRole } = require('./service.service');
+const { findStaffBusyBlock, getShiftFromTime, currentTimeVN } = require('./staffSchedule.service');
+const { runWithTransaction } = require('../utils/transaction');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhầm lẫn
 const CODE_LENGTH = 6;
@@ -44,18 +47,22 @@ const toPublicCustomer = (user) => ({
 /**
  * Tạo User khách vãng lai mới ở trạng thái Inactive, mật khẩu rỗng theo BR-04 & UC-21
  */
-const createInactiveWalkInUser = async ({ fullName, phone, email }) => {
+const createInactiveWalkInUser = async ({ fullName, phone, email }, session = null) => {
+  const payload = {
+    code: generateEntityCode('USR'),
+    fullName,
+    phone,
+    email,
+    passwordHash: null,
+    role: 'PetOwner',
+    status: 'Inactive',
+  };
+
   for (let attempt = 1; attempt <= MAX_CODE_RETRIES; attempt++) {
     try {
-      const user = await User.create({
-        code: generateEntityCode('USR'),
-        fullName,
-        phone,
-        email,
-        passwordHash: null,
-        role: 'PetOwner',
-        status: 'Inactive',
-      });
+      const user = session
+        ? (await User.create([{ ...payload, code: generateEntityCode('USR') }], { session }))[0]
+        : await User.create({ ...payload, code: generateEntityCode('USR') });
       return user.toObject();
     } catch (err) {
       if (isDuplicateCodeError(err)) continue;
@@ -71,15 +78,18 @@ const createInactiveWalkInUser = async ({ fullName, phone, email }) => {
 /**
  * Tạo hồ sơ thú cưng mới cho khách vãng lai theo UC-09 & BR-24
  */
-const createWalkInPet = async (ownerId, petInfo) => {
+const createWalkInPet = async (ownerId, petInfo, session = null) => {
   for (let attempt = 1; attempt <= MAX_CODE_RETRIES; attempt++) {
     try {
-      const pet = await Pet.create({
+      const payload = {
         ...petInfo,
         code: generateEntityCode('PET'),
         ownerId,
         status: 'Active',
-      });
+      };
+      const pet = session
+        ? (await Pet.create([payload], { session }))[0]
+        : await Pet.create(payload);
       return pet.toObject();
     } catch (err) {
       if (isDuplicateCodeError(err)) continue;
@@ -92,7 +102,10 @@ const createWalkInPet = async (ownerId, petInfo) => {
 /**
  * Tạo đơn lịch hẹn Walk-in ở trạng thái CheckedIn ngay lập tức theo UC-19 & BR-06
  */
-const createWalkInAppointmentOrder = async ({ petId, ownerId, date, note, intake, recordedBy }) => {
+const createWalkInAppointmentOrder = async (
+  { petId, ownerId, date, note, intake, recordedBy },
+  session = null
+) => {
   const checkedInAt = new Date();
   const orderPayload = {
     code: generateEntityCode('APT'),
@@ -116,7 +129,10 @@ const createWalkInAppointmentOrder = async ({ petId, ownerId, date, note, intake
 
   for (let attempt = 1; attempt <= MAX_CODE_RETRIES; attempt++) {
     try {
-      const order = await AppointmentOrder.create(orderPayload);
+      const payload = { ...orderPayload, code: generateEntityCode('APT') };
+      const order = session
+        ? (await AppointmentOrder.create([payload], { session }))[0]
+        : await AppointmentOrder.create(payload);
       return order.toObject();
     } catch (err) {
       if (isDuplicateCodeError(err)) continue;
@@ -224,11 +240,25 @@ const createWalkInBooking = async (receptionistId, payload) => {
       if (staff.status !== 'Active') {
         throw httpError(400, `Nhân viên "${staff.fullName}" hiện không ở trạng thái hoạt động (Active)`);
       }
-      if (svc.category === 'Grooming' && staff.role !== 'Groomer') {
-        throw httpError(400, `Dịch vụ "${svc.name}" (Grooming) chỉ được phân công cho nhân viên Groomer`);
+      const expectedRole = resolveServiceRequiredRole(svc);
+      if (expectedRole && staff.role !== expectedRole) {
+        throw httpError(
+          400,
+          `Dịch vụ "${svc.name}" (${svc.category}) chỉ được phân công cho nhân sự có vai trò ${expectedRole}`
+        );
       }
-      if (svc.category !== 'Grooming' && staff.role !== 'Veterinarian') {
-        throw httpError(400, `Dịch vụ "${svc.name}" (${svc.category}) chỉ được phân công cho Bác sĩ thú y (Veterinarian)`);
+
+      const targetShift = getShiftFromTime(currentTimeVN());
+      const busyBlock = await findStaffBusyBlock({
+        staffId: staff._id,
+        date,
+        shift: targetShift,
+      });
+      if (busyBlock) {
+        throw httpError(
+          409,
+          `Nhân sự "${staff.fullName}" đã báo bận vào ca ${targetShift} ngày ${date}`
+        );
       }
     }
   }
@@ -311,110 +341,114 @@ const createWalkInBooking = async (receptionistId, payload) => {
     }
   }
 
-  // 4b. Tạo khách hàng mới (Inactive) nếu chưa có trong hệ thống
-  if (!customer) {
-    customer = await createInactiveWalkInUser({ fullName, phone, email });
-    isNewCustomer = true;
-  }
+  // 4b -> 8: Ghi toàn bộ dữ liệu Walk-in trong Transaction (hỗ trợ Atlas/Replica Set, tự rollback nếu chạy standalone)
+  return runWithTransaction(async (session) => {
+    let txCustomer = customer;
+    let txPet = pet;
+    let appointment = null;
+    const createdServices = [];
+    let cageAssignment = null;
 
-  // 5. Tạo thú cưng mới nếu Lễ tân truyền petInfo (UC-09)
-  if (!pet && petInfo) {
     try {
-      pet = await createWalkInPet(customer._id, petInfo);
-      isNewPet = true;
+      if (!txCustomer) {
+        txCustomer = await createInactiveWalkInUser({ fullName, phone, email }, session);
+        isNewCustomer = true;
+      }
+
+      if (!txPet && petInfo) {
+        txPet = await createWalkInPet(txCustomer._id, petInfo, session);
+        isNewPet = true;
+      }
+
+      appointment = await createWalkInAppointmentOrder(
+        {
+          petId: txPet._id,
+          ownerId: txCustomer._id,
+          date,
+          note,
+          intake,
+          recordedBy: receptionistId,
+        },
+        session
+      );
+
+      // Tạo tuần tự từng dịch vụ trong đơn Walk-in (AppointmentService)
+      for (let i = 0; i < services.length; i++) {
+        const { serviceId, assignedStaffId, isEmergency } = services[i];
+        const sequenceNo = i + 1;
+
+        const serviceDoc = {
+          orderId: appointment._id,
+          serviceId,
+          sequenceNo,
+          isEmergency: Boolean(isEmergency),
+          assignedStaffId: assignedStaffId || null,
+          status: 'Booked',
+          queueNo: null,
+          enqueueAt: null,
+        };
+
+        // Vì đơn Walk-in đã ở trạng thái CheckedIn, nếu có phân công nhân viên thì đẩy thẳng vào hàng đợi Waiting (BR-12)
+        if (assignedStaffId) {
+          const lastQuery = AppointmentService.findOne({
+            assignedStaffId,
+            queueNo: { $ne: null },
+          })
+            .sort({ queueNo: -1 })
+            .select('queueNo');
+          const lastQueued = session ? await lastQuery.session(session).lean() : await lastQuery.lean();
+
+          serviceDoc.status = 'Waiting';
+          serviceDoc.queueNo = lastQueued && lastQueued.queueNo ? lastQueued.queueNo + 1 : 1;
+          serviceDoc.enqueueAt = appointment.checkedInAt;
+        }
+
+        const created = session
+          ? (await AppointmentService.create([serviceDoc], { session }))[0]
+          : await AppointmentService.create(serviceDoc);
+
+        const popQuery = AppointmentService.findById(created._id)
+          .populate('serviceId')
+          .populate('assignedStaffId', 'code fullName role status');
+        const populated = session ? await popQuery.session(session).lean() : await popQuery.lean();
+
+        createdServices.push(populated);
+      }
+
+      // Gán chuồng lưu giữ nếu Lễ tân chọn chuồng ngay trên Modal Walk-in (SCR-18 / UC-29 / BR-11)
+      if (cageId) {
+        cageAssignment = await createCageAssignment({
+          cageId,
+          orderId: appointment._id,
+          assignedById: receptionistId,
+          petWeight: txPet?.weight,
+          requiresIsolation: Boolean(requiresIsolation),
+          session,
+        });
+      }
+
+      return {
+        isNewCustomer,
+        customer: toPublicCustomer(txCustomer),
+        isNewPet,
+        pet: txPet,
+        appointment,
+        services: createdServices,
+        cageAssignment,
+      };
     } catch (err) {
-      if (isNewCustomer) {
-        await User.deleteOne({ _id: customer._id }).catch(() => {});
+      // Hoàn tác thủ công khi chạy MongoDB standalone (không dùng transaction)
+      if (!session) {
+        await Promise.allSettled([
+          appointment ? AppointmentService.deleteMany({ orderId: appointment._id }) : Promise.resolve(),
+          appointment ? AppointmentOrder.deleteOne({ _id: appointment._id }) : Promise.resolve(),
+          isNewPet && txPet ? Pet.deleteOne({ _id: txPet._id }) : Promise.resolve(),
+          isNewCustomer && txCustomer ? User.deleteOne({ _id: txCustomer._id }) : Promise.resolve(),
+        ]);
       }
       throw err;
     }
-  }
-
-  // 6. Tạo đơn lịch hẹn Walk-in ở trạng thái CheckedIn ngay tại quầy (UC-19, BR-06)
-  let appointment = null;
-  const createdServices = [];
-  let cageAssignment = null;
-
-  try {
-    appointment = await createWalkInAppointmentOrder({
-      petId: pet._id,
-      ownerId: customer._id,
-      date,
-      note,
-      intake,
-      recordedBy: receptionistId,
-    });
-
-    // 7. Tạo tuần tự từng dịch vụ trong đơn Walk-in (AppointmentService)
-    for (let i = 0; i < services.length; i++) {
-      const { serviceId, assignedStaffId, isEmergency } = services[i];
-      const sequenceNo = i + 1;
-
-      const serviceDoc = {
-        orderId: appointment._id,
-        serviceId,
-        sequenceNo,
-        isEmergency: Boolean(isEmergency),
-        assignedStaffId: assignedStaffId || null,
-        status: 'Booked',
-        queueNo: null,
-        enqueueAt: null,
-      };
-
-      // Vì đơn Walk-in đã ở trạng thái CheckedIn, nếu có phân công nhân viên thì đẩy thẳng vào hàng đợi Waiting (BR-12)
-      if (assignedStaffId) {
-        const lastQueued = await AppointmentService.findOne({
-          assignedStaffId,
-          queueNo: { $ne: null },
-        })
-          .sort({ queueNo: -1 })
-          .select('queueNo')
-          .lean();
-
-        serviceDoc.status = 'Waiting';
-        serviceDoc.queueNo = lastQueued && lastQueued.queueNo ? lastQueued.queueNo + 1 : 1;
-        serviceDoc.enqueueAt = appointment.checkedInAt;
-      }
-
-      const created = await AppointmentService.create(serviceDoc);
-      const populated = await AppointmentService.findById(created._id)
-        .populate('serviceId')
-        .populate('assignedStaffId', 'code fullName role status')
-        .lean();
-
-      createdServices.push(populated);
-    }
-
-    // 8. Gán chuồng lưu giữ nếu Lễ tân chọn chuồng ngay trên Modal Walk-in (SCR-18 / UC-29 / BR-11)
-    if (cageId) {
-      cageAssignment = await createCageAssignment({
-        cageId,
-        orderId: appointment._id,
-        assignedById: receptionistId,
-        petWeight: pet?.weight,
-        requiresIsolation: Boolean(requiresIsolation),
-      });
-    }
-  } catch (err) {
-    // Hoàn tác toàn bộ các bản ghi vừa tạo trong phiên walk-in nếu có lỗi (vd: tranh chấp chuồng đồng thời)
-    await Promise.allSettled([
-      appointment ? AppointmentService.deleteMany({ orderId: appointment._id }) : Promise.resolve(),
-      appointment ? AppointmentOrder.deleteOne({ _id: appointment._id }) : Promise.resolve(),
-      isNewPet && pet ? Pet.deleteOne({ _id: pet._id }) : Promise.resolve(),
-      isNewCustomer && customer ? User.deleteOne({ _id: customer._id }) : Promise.resolve(),
-    ]);
-    throw err;
-  }
-
-  return {
-    isNewCustomer,
-    customer: toPublicCustomer(customer),
-    isNewPet,
-    pet,
-    appointment,
-    services: createdServices,
-    cageAssignment,
-  };
+  });
 };
 
 module.exports = {

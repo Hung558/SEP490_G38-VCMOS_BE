@@ -137,6 +137,10 @@ const listStaff = async (req, res) => {
       status: query.status,
       search: query.search,
       workDate: query.workDate ? query.workDate.trim() : undefined,
+      date: query.date ? query.date.trim() : undefined,
+      shift: query.shift ? query.shift.trim().toUpperCase() : undefined,
+      time: query.time ? query.time.trim() : undefined,
+      serviceId: query.serviceId ? query.serviceId.trim() : undefined,
       page: query.page ? Number(query.page) : undefined,
       limit: query.limit ? Number(query.limit) : undefined,
     });

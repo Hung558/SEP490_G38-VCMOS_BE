@@ -9,6 +9,9 @@ const CageAssignment = require('../models/CageAssignment');
 const AppointmentService = require('../models/AppointmentService');
 const { canCageAccommodatePet, getPreferredCageSizeOrder } = require('./cage.service');
 const { createCageAssignment, releaseCageAssignment } = require('./cageAssignment.service');
+const { resolveServiceRequiredRole } = require('./service.service');
+const { findStaffBusyBlock, getShiftFromTime, currentTimeVN } = require('./staffSchedule.service');
+const { runWithTransaction } = require('../utils/transaction');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // bỏ 0/O/1/I để tránh nhìn nhầm
 const CODE_LENGTH = 6;
@@ -582,7 +585,7 @@ const assertCageReadyForCheckIn = async ({ cageId, petId, requiresIsolation }) =
  * Kiểm tra trước danh sách phân công bác sĩ / Groomer khi Lễ tân bấm Check-in.
  * Đảm bảo mọi nhân sự đều Active và đúng chuyên môn (Veterinarian / Groomer) trước khi ghi DB.
  */
-const prepareServiceStaffAssignments = async ({ orderId, assignedStaffId, serviceAssignments }) => {
+const prepareServiceStaffAssignments = async ({ orderId, order, assignedStaffId, serviceAssignments }) => {
   const orderServices = await AppointmentService.find({ orderId }).lean();
   const orderServiceMap = new Map(orderServices.map((s) => [String(s._id), s]));
 
@@ -621,7 +624,7 @@ const prepareServiceStaffAssignments = async ({ orderId, assignedStaffId, servic
   const [staffDocs, serviceDocs] = await Promise.all([
     User.find({ _id: { $in: staffIds } }).select('fullName role status').lean(),
     serviceIds.length > 0 && typeof Service.find === 'function'
-      ? Service.find({ _id: { $in: serviceIds } }).select('name category').lean()
+      ? Service.find({ _id: { $in: serviceIds } }).select('name category requiredRole').lean()
       : Promise.resolve([]),
   ]);
 
@@ -642,16 +645,28 @@ const prepareServiceStaffAssignments = async ({ orderId, assignedStaffId, servic
 
     const catalogSvc = serviceCatalogMap.get(String(item.appointmentService.serviceId));
     if (catalogSvc) {
-      if (catalogSvc.category === 'Grooming' && staff.role !== 'Groomer') {
+      const expectedRole = resolveServiceRequiredRole(catalogSvc);
+      if (expectedRole && staff.role !== expectedRole) {
         throw createError(
           400,
-          `Dịch vụ "${catalogSvc.name}" (Grooming) chỉ được phân công cho nhân viên Groomer`
+          `Dịch vụ "${catalogSvc.name}" (${catalogSvc.category}) chỉ được phân công cho nhân sự có vai trò ${expectedRole}`
         );
       }
-      if (catalogSvc.category !== 'Grooming' && staff.role !== 'Veterinarian') {
+    }
+
+    if (order && order.date) {
+      const targetShift = getShiftFromTime(
+        item.appointmentService.scheduledStart || order.slotStart || currentTimeVN()
+      );
+      const busyBlock = await findStaffBusyBlock({
+        staffId: item.assignedStaffId,
+        date: order.date,
+        shift: targetShift,
+      });
+      if (busyBlock) {
         throw createError(
-          400,
-          `Dịch vụ "${catalogSvc.name}" (${catalogSvc.category}) chỉ được phân công cho Bác sĩ thú y (Veterinarian)`
+          409,
+          `Nhân sự "${staff.fullName}" đã báo bận vào ca ${targetShift} ngày ${order.date}`
         );
       }
     }
@@ -677,7 +692,7 @@ const checkInAppointment = async (id, options = {}) => {
   let preOrder = null;
   if (mustPreloadOrder) {
     preOrder = await AppointmentOrder.findById(id)
-      .select('derivedStatus petId intake note reservedCageId')
+      .select('derivedStatus petId intake note reservedCageId date slotStart')
       .lean();
     if (!preOrder) {
       throw createError(404, 'Không tìm thấy lịch hẹn');
@@ -688,7 +703,7 @@ const checkInAppointment = async (id, options = {}) => {
   } else if (options && options.staffId && typeof AppointmentOrder.findById === 'function') {
     const preQuery = AppointmentOrder.findById(id);
     if (preQuery && typeof preQuery.select === 'function') {
-      preOrder = await preQuery.select('derivedStatus petId intake note reservedCageId').lean();
+      preOrder = await preQuery.select('derivedStatus petId intake note reservedCageId date slotStart').lean();
       if (!preOrder) {
         throw createError(404, 'Không tìm thấy lịch hẹn');
       }
@@ -724,6 +739,7 @@ const checkInAppointment = async (id, options = {}) => {
   if (hasExplicitAssignments) {
     plannedAssignments = await prepareServiceStaffAssignments({
       orderId: id,
+      order: preOrder,
       assignedStaffId: options.assignedStaffId,
       serviceAssignments: options.serviceAssignments,
     });
@@ -748,16 +764,35 @@ const checkInAppointment = async (id, options = {}) => {
     updateFields.reservedCageId = options.cageId;
   }
 
-  const appointment = await AppointmentOrder.findOneAndUpdate(
-    { _id: id, derivedStatus: 'Booked' },
-    { $set: updateFields },
-    { new: true }
-  ).lean();
+  const runCheckInWrite = async (session) => {
+    const updateOpts = session ? { new: true, session } : { new: true };
+    const sessionOpt = session ? { session } : undefined;
 
-  if (appointment) {
+    const appointment = await AppointmentOrder.findOneAndUpdate(
+      { _id: id, derivedStatus: 'Booked' },
+      { $set: updateFields },
+      updateOpts
+    ).lean();
+
+    if (!appointment) {
+      const existingQuery = AppointmentOrder.findById(id).select('derivedStatus');
+      const existing =
+        session && existingQuery && typeof existingQuery.session === 'function'
+          ? await existingQuery.session(session).lean()
+          : await existingQuery.lean();
+      if (!existing) {
+        throw createError(404, 'Không tìm thấy lịch hẹn');
+      }
+      throw createError(
+        409,
+        `Không thể check-in lịch hẹn đang ở trạng thái "${existing.derivedStatus}"`
+      );
+    }
+
     const previousServiceSnapshots = [];
 
     const rollbackEverything = async () => {
+      if (session) return; // Transaction tự động rollback toàn bộ thay đổi trên DB
       const rollbackOrder = {
         derivedStatus: 'Booked',
         checkedInAt: null,
@@ -798,13 +833,14 @@ const checkInAppointment = async (id, options = {}) => {
 
         await Promise.all(
           uniqueStaffIds.map(async (staffKey) => {
-            const lastQueued = await AppointmentService.findOne({
+            const lastQuery = AppointmentService.findOne({
               assignedStaffId: staffKey,
               queueNo: { $ne: null },
-            })
-              .sort({ queueNo: -1 })
-              .select('queueNo')
-              .lean();
+            }).sort({ queueNo: -1 }).select('queueNo');
+            const lastQueued =
+              session && lastQuery && typeof lastQuery.session === 'function'
+                ? await lastQuery.session(session).lean()
+                : await lastQuery.lean();
             const startNo = lastQueued && lastQueued.queueNo ? lastQueued.queueNo + 1 : 1;
             nextQueueByStaff.set(staffKey, startNo);
           })
@@ -824,14 +860,18 @@ const checkInAppointment = async (id, options = {}) => {
           const queueNo = nextQueueByStaff.get(staffKey);
           nextQueueByStaff.set(staffKey, queueNo + 1);
 
-          await AppointmentService.findByIdAndUpdate(svc._id, {
-            $set: {
-              assignedStaffId: item.assignedStaffId,
-              queueNo,
-              status: 'Waiting',
-              enqueueAt: enqueueTime,
+          await AppointmentService.findByIdAndUpdate(
+            svc._id,
+            {
+              $set: {
+                assignedStaffId: item.assignedStaffId,
+                queueNo,
+                status: 'Waiting',
+                enqueueAt: enqueueTime,
+              },
             },
-          });
+            sessionOpt
+          );
           assignedIdsHandled.add(String(svc._id));
         }
       }
@@ -847,7 +887,7 @@ const checkInAppointment = async (id, options = {}) => {
           filterOtherBooked._id = { $nin: [...assignedIdsHandled] };
         }
 
-        if (shouldRollbackOnFailure && typeof AppointmentService.find === 'function') {
+        if (shouldRollbackOnFailure && !session && typeof AppointmentService.find === 'function') {
           const otherBookedServices = await AppointmentService.find(filterOtherBooked).lean();
           for (const svc of otherBookedServices) {
             previousServiceSnapshots.push({
@@ -860,9 +900,11 @@ const checkInAppointment = async (id, options = {}) => {
           }
         }
 
-        await AppointmentService.updateMany(filterOtherBooked, {
-          $set: { status: 'Waiting', enqueueAt: enqueueTime },
-        });
+        await AppointmentService.updateMany(
+          filterOtherBooked,
+          { $set: { status: 'Waiting', enqueueAt: enqueueTime } },
+          sessionOpt
+        );
       }
 
       // 3. Nếu có chuồng giữ chỗ hoặc Lễ tân chọn/đổi chuồng khi Check-in, gán chuồng thực tế (Available -> Occupied)
@@ -877,36 +919,31 @@ const checkInAppointment = async (id, options = {}) => {
           assignedById: String(options.staffId),
           petWeight,
           requiresIsolation: Boolean(options.requiresIsolation),
+          session,
         });
       }
 
-      if (!shouldAssignCage && !hasExplicitAssignments) {
-        return appointment;
-      }
-
-      const [enrichedOrder] = await enrichOrdersWithCageAndServices([appointment]);
-      const responseData = { ...(enrichedOrder || appointment) };
-      if (cageAssignment) {
-        responseData.cageAssignment = cageAssignment;
-      }
-      return responseData;
+      return { appointment, cageAssignment };
     } catch (err) {
-      if (shouldRollbackOnFailure) {
+      if (shouldRollbackOnFailure && !session) {
         await rollbackEverything();
       }
       throw err;
     }
+  };
+
+  const { appointment, cageAssignment } = await runWithTransaction(runCheckInWrite);
+
+  if (!shouldAssignCage && !hasExplicitAssignments) {
+    return appointment;
   }
 
-  // Nothing updated: either it doesn't exist, or it isn't in 'Booked' status
-  const existing = await AppointmentOrder.findById(id).select('derivedStatus').lean();
-  if (!existing) {
-    throw createError(404, 'Không tìm thấy lịch hẹn');
+  const [enrichedOrder] = await enrichOrdersWithCageAndServices([appointment]);
+  const responseData = { ...(enrichedOrder || appointment) };
+  if (cageAssignment) {
+    responseData.cageAssignment = cageAssignment;
   }
-  throw createError(
-    409,
-    `Không thể check-in lịch hẹn đang ở trạng thái "${existing.derivedStatus}"`
-  );
+  return responseData;
 };
 
 /**

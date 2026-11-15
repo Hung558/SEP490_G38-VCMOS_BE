@@ -188,6 +188,11 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       ownerId: ownerUser._id,
       petId: petDoc._id,
       date: '2026-11-10',
+      note: 'Ghi chú đặt lịch ban đầu',
+      intake: {
+        symptoms: 'Bỏ ăn 2 ngày, nôn khan buổi sáng',
+        initialCondition: 'Hơi mệt, vẫn đi lại được',
+      },
       derivedStatus: 'CheckedIn',
       checkedInAt: new Date(),
     });
@@ -243,7 +248,7 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       expect(res.body.message).toMatch(/Dịch vụ đứng trước/i);
     });
 
-    it('bắt đầu ca khám số 1 thành công: chuyển sang InProgress, tự động nhả chuồng chờ (BR-10) và tạo bản nháp bệnh án', async () => {
+    it('bắt đầu ca khám số 1 thành công: chuyển sang InProgress, tự động nhả chuồng chờ (BR-10), tạo bản nháp và copy nguyên văn ghi chú tiếp nhận vào chữ S', async () => {
       const res = await request(app)
         .post(`/api/medical-records/service/${firstServiceDoc._id}/start`)
         .set('Authorization', `Bearer ${vetToken}`);
@@ -251,6 +256,7 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       expect(res.status).toBe(200);
       expect(res.body.appointmentService.status).toBe('InProgress');
       expect(res.body.medicalRecord.status).toBe('Draft');
+      expect(res.body.medicalRecord.subjectiveNote).toBe('Bỏ ăn 2 ngày, nôn khan buổi sáng');
       expect(res.body.releasedCageAssignment).toBeTruthy();
       expect(res.body.releasedCageAssignment.releasedAt).toBeTruthy();
 
@@ -283,12 +289,12 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       expect(res.body.message).toMatch(/hết hàng \(Inactive\)/i);
     });
 
-    it('lưu nháp bệnh án SOAP, chụp snapshot đơn thuốc (UC-36) và tự động cập nhật cân nặng thú cưng (T-33)', async () => {
+    it('lưu nháp bệnh án SOAP (khóa chữ S không cho sửa đè), chụp snapshot đơn thuốc (UC-36) và tự động cập nhật cân nặng thú cưng (T-33)', async () => {
       const res = await request(app)
         .put(`/api/medical-records/service/${firstServiceDoc._id}`)
         .set('Authorization', `Bearer ${vetToken}`)
         .send({
-          subjectiveNote: 'Bỏ ăn 2 ngày, nôn khan buổi sáng',
+          subjectiveNote: 'Bác sĩ cố tình sửa đè lời khai chữ S',
           objectiveNote: 'Nhiệt độ 39.2 độ C, niêm mạc hồng nhạt',
           assessment: 'Viêm dạ dày ruột cấp nhẹ',
           weight: 9.2,
@@ -305,6 +311,7 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('Draft');
+      // Chữ S được khóa read-only theo ghi chú tiếp nhận ban đầu, không bị ghi đè bởi payload PUT
       expect(res.body.subjectiveNote).toBe('Bỏ ăn 2 ngày, nôn khan buổi sáng');
       expect(res.body.prescriptions).toHaveLength(1);
       expect(res.body.prescriptions[0].productNameSnapshot).toBe('Amoxicillin 250mg');
@@ -316,7 +323,7 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
   });
 
   describe('3. POST /api/medical-records/service/:appointmentServiceId/complete (Hoàn tất bệnh án)', () => {
-    it('chặn hoàn tất nếu thiếu trường trong bộ 4 trường S - O - A - P theo BR-13 (400)', async () => {
+    it('chặn hoàn tất nếu thiếu trường O - A - P theo BR-13 (400)', async () => {
       // Bản nháp mới có S, O, A nhưng chưa có Plan (P)
       const res = await request(app)
         .post(`/api/medical-records/service/${firstServiceDoc._id}/complete`)
@@ -365,6 +372,7 @@ describe('MedicalRecord Workflow (/api/medical-records)', () => {
       expect(res.status).toBe(200);
       // BR-14: Bệnh án vẫn ở Draft cho đến khi hóa đơn được thanh toán (Invoice Paid)
       expect(res.body.medicalRecord.status).toBe('Draft');
+      expect(res.body.medicalRecord.subjectiveNote).toBe('Bỏ ăn 2 ngày, nôn khan buổi sáng');
       expect(res.body.appointmentService.status).toBe('Done');
       // Còn dịch vụ số 2 chưa làm nên đơn hẹn vẫn ở InProgress
       expect(res.body.appointmentOrder.derivedStatus).toBe('InProgress');

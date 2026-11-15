@@ -187,18 +187,20 @@
 
 ---
 
-### 2.9. Xem danh sách Bác sĩ / Groomer (`GET /api/users/staff`)
+### 2.9. Xem danh sách Bác sĩ / Groomer khả dụng (`GET /api/users/staff`)
 - **Method**: `GET`
-- **URL**: `http://localhost:9999/api/users/staff?role=Veterinarian&status=Active&page=1&limit=10`
+- **URL**: `http://localhost:9999/api/users/staff?serviceId=<id_dich_vu>&date=2026-11-20&shift=MORNING&status=Active&page=1&limit=10`
 - **Auth**: 🔒 Cần Bearer Token (Mọi role đã đăng nhập)
 - **Query tùy chọn**:
+  - `serviceId`: Tự động lọc đúng vai trò được phép làm dịch vụ đó (`Service.requiredRole`: `Veterinarian` hoặc `Groomer`)
   - `role`: `Veterinarian` hoặc `Groomer`
   - `status`: `Active` (mặc định), `Inactive`, `Locked`
   - `search`: Tìm theo họ tên, mã `code`, SĐT
-  - `workDate`: Lọc theo ngày làm việc (`YYYY-MM-DD`) chỉ lấy nhân sự có ca trực trong ngày đó
+  - `date` (hoặc `workDate`): Ngày cần điều phối (`YYYY-MM-DD`); tự động ẩn các nhân sự đang báo bận trong `StaffSchedule` tại ca tương ứng
+  - `shift`: Ca làm việc `MORNING` | `AFTERNOON` | `EVENING` (hoặc truyền `time=HH:mm` để BE tự suy ra ca; nếu không truyền ca khi lọc ngày hôm nay thì BE lấy ca theo giờ hiện tại)
   - `page`, `limit`: Phân trang
 - **Kết quả mong đợi**:
-  - `200 OK`: Trả về `{ items, pagination }`.
+  - `200 OK`: Trả về `{ items, pagination }` gồm các nhân sự đang khả dụng (mặc định sẵn sàng nếu không có bản ghi báo bận).
 
 ---
 
@@ -340,11 +342,13 @@
   {
     "name": "Khám tổng quát chuyên sâu",
     "category": "Examination",
+    "requiredRole": "Veterinarian",
     "defaultDuration": 30,
     "basePrice": 150000,
     "description": "Khám lâm sàng toàn diện cho thú cưng"
   }
   ```
+  *(Lưu ý: `requiredRole` là `"Veterinarian"` hoặc `"Groomer"`; nếu không truyền, BE tự mặc định `"Groomer"` cho `Grooming` và `"Veterinarian"` cho các danh mục còn lại).*
 - **Kết quả mong đợi**:
   - `201 Created`: Tự sinh mã `SRV-XXXXXX` bất biến, `status: "Active"`. (`defaultDuration` là số nguyên `5–480` phút; `basePrice >= 0`).
   - `409 Conflict`: Trùng tên dịch vụ trong cùng `category`.
@@ -360,6 +364,7 @@
   {
     "name": "Khám tổng quát chuyên sâu (Gói tiêu chuẩn)",
     "category": "Examination",
+    "requiredRole": "Veterinarian",
     "defaultDuration": 45,
     "basePrice": 180000,
     "description": "Cập nhật thời lượng 45 phút và giá niêm yết mới"
@@ -642,8 +647,8 @@
   ```
 - **Kết quả mong đợi**:
   - `200 OK`: Gán hoặc đổi `assignedStaffId` cho dịch vụ (dùng cho trường hợp đổi nhân sự hoặc gán nhân sự cho dịch vụ phát sinh thêm sau khi đã Check-in). Dịch vụ tự động chuyển `status` sang **`"Waiting"`**, tự động cấp số thứ tự hàng đợi `queueNo` và ghi nhận thời điểm `enqueueAt`.
-  - `400 Bad Request`: Nếu nhân sự không phải `Veterinarian` / `Groomer` hoặc không ở trạng thái `Active`.
-  - `409 Conflict`: Nếu đơn hẹn đang ở trạng thái `"Booked"` (chưa Check-in — phải phân công tại bước Check-in) hoặc đơn/dịch vụ không còn ở trạng thái cho phép phân công.
+  - `400 Bad Request`: Nếu đơn hẹn đang ở trạng thái `"Booked"` (chưa Check-in — phải phân công tại bước Check-in), hoặc nhân sự sai vai trò (`Service.requiredRole`) / không ở trạng thái `Active`.
+  - `409 Conflict`: Nếu đơn/dịch vụ không còn ở trạng thái cho phép phân công hoặc nhân sự đã báo bận ca đó.
 
 ---
 
@@ -789,6 +794,7 @@
     - Kiểm tra thứ tự `sequenceNo` theo **`BR-12`** (nếu dịch vụ đứng trước trong cùng đơn hẹn chưa `Done` thì chặn `409`).
     - Tự động giải phóng chuồng chờ (nếu thú cưng đang nằm trong chuồng chờ lúc đợi khám) theo **`BR-10`**.
     - Chuyển dịch vụ khám sang **`InProgress`** (ghi nhận `dequeueAt`), chuyển đơn hẹn sang **`InProgress`**, và khởi tạo bản nháp (`Draft`) `MedicalRecord`.
+    - **Tự động điền & khóa chữ `S` (`subjectiveNote`)**: BE tự copy nguyên văn triệu chứng/ghi chú tiếp nhận từ `AppointmentOrder` (`intake.symptoms` hoặc `note`) vào `subjectiveNote` và khóa chỉ đọc đối với bác sĩ.
   - `403 Forbidden`: Không phải bác sĩ được phân công phụ trách ca khám này.
   - `409 Conflict`: Khách chưa Check-in hoặc dịch vụ đứng trước chưa hoàn thành (`BR-12`).
 
@@ -798,10 +804,9 @@
 - **Method**: `PUT`
 - **URL**: `http://localhost:9999/api/medical-records/service/:appointmentServiceId`
 - **Auth**: 🔒 Chỉ `Veterinarian` (đúng bác sĩ được phân công)
-- **Body (`JSON`)**:
+- **Body (`JSON`)** *(chữ `S` `subjectiveNote` được giữ nguyên chỉ đọc, BE tự bỏ qua nếu gửi lên khi cập nhật)*:
   ```json
   {
-    "subjectiveNote": "Bỏ ăn 2 ngày, nôn khan buổi sáng",
     "objectiveNote": "Nhiệt độ 39.2 độ C, niêm mạc hồng nhạt",
     "assessment": "Viêm dạ dày ruột cấp nhẹ",
     "plan": "Uống kháng sinh 5 ngày, ăn thức ăn mềm, tái khám sau 7 ngày",
@@ -820,7 +825,7 @@
   ```
 - **Kết quả mong đợi**:
   - `200 OK`:
-    - Lưu bản nháp (`status: "Draft"`) bệnh án SOAP.
+    - Lưu bản nháp (`status: "Draft"`) bệnh án SOAP, giữ nguyên `subjectiveNote` gốc từ tiếp nhận.
     - Nếu truyền `weight`: tự động cập nhật cân nặng mới nhất vào hồ sơ gốc của thú cưng (`Pet.weight`).
     - Kiểm tra danh sách thuốc kê đơn theo **`BR-16`** (chỉ cho phép thuốc đang `Active` / Còn hàng) và chụp snapshot `productNameSnapshot`, `unitSnapshot`.
   - `400 Bad Request`: Kê thuốc đang `Inactive` (hết hàng) hoặc dữ liệu sai định dạng.
@@ -832,10 +837,9 @@
 - **Method**: `POST`
 - **URL**: `http://localhost:9999/api/medical-records/service/:appointmentServiceId/complete`
 - **Auth**: 🔒 Chỉ `Veterinarian` (đúng bác sĩ được phân công)
-- **Body (`JSON`)** *(có thể gửi bổ sung các trường S-O-A-P còn thiếu so với bản nháp và tùy chọn `waitingCageId`)*:
+- **Body (`JSON`)** *(có thể gửi bổ sung O-A-P còn thiếu so với bản nháp và tùy chọn `waitingCageId`; chữ `S` giữ nguyên read-only)*:
   ```json
   {
-    "subjectiveNote": "Bỏ ăn 2 ngày, nôn khan buổi sáng",
     "objectiveNote": "Nhiệt độ 39.2 độ C, niêm mạc hồng nhạt",
     "assessment": "Viêm dạ dày ruột cấp nhẹ",
     "plan": "Uống kháng sinh 5 ngày, ăn thức ăn mềm, tái khám sau 7 ngày",
@@ -845,7 +849,7 @@
   ```
 - **Kết quả mong đợi**:
   - `200 OK`:
-    - Bắt buộc đủ cả 4 trường **S - O - A - P** theo **`BR-13`**.
+    - Bắt buộc bác sĩ nhập đủ **O - A - P** theo **`BR-13`** (chữ **S** tự lấy từ kê khai tiếp nhận).
     - Chặn hoàn tất nếu vẫn còn chỉ định Cận lâm sàng (`SubtaskRequest`) ở trạng thái `Pending` hoặc `InProgress` (**`MSG26`**).
     - Theo **`BR-14`**: Giữ bệnh án ở trạng thái **`status: "Draft"`** khi bác sĩ vừa khám xong; chỉ khi Lễ tân thu tiền xong (`Invoice.paymentStatus = "Paid"`) thì bệnh án mới chuyển sang **`Finalized`** và khóa vĩnh viễn.
     - Chuyển trạng thái dịch vụ khám sang **`Done`**.
@@ -883,6 +887,7 @@
   ```json
   {
     "appointmentServiceId": "<id_AppointmentService_đang_InProgress>",
+    "serviceId": "<id_dịch_vụ_tùy_chọn_để_kiểm_tra_requiredRole>",
     "assignedStaffId": "<id_Veterinarian_hoặc_Groomer_Active>",
     "taskType": "Xét nghiệm sinh hóa máu",
     "instructions": "Kiểm tra men gan ALT và ure trước khi kê đơn"
@@ -943,5 +948,36 @@
 - **Kết quả mong đợi**:
   - `200 OK`: Xóa yêu cầu khi còn ở trạng thái `Pending` (tránh kẹt chốt chặn `MSG26` nếu chỉ định nhầm).
   - `409 Conflict`: Sub-task đã chuyển sang `InProgress` hoặc `Completed`.
+
+---
+
+## 12. 📅 Lịch Báo Bận 3 Ca Theo Cơ Chế Blacklist (`Staff Schedules` — `/api/staff-schedules`)
+
+- **Quy ước 3 ca**: `MORNING` (`08:00–12:00`), `AFTERNOON` (`12:00–17:00`), `EVENING` (`17:00–21:00`). Nhân sự mặc định sẵn sàng nhận ca; chỉ lưu bản ghi khi báo bận.
+
+### 12.1. Đăng ký báo bận (`POST /api/staff-schedules`)
+- **Auth**: 🔒 `Veterinarian`, `Groomer` (tự báo cho mình), hoặc `Receptionist`, `Admin` (báo hộ qua `staffId`)
+- **Body (`JSON`)**:
+  ```json
+  {
+    "staffId": "<bắt_buộc_nếu_Lễ_tân_hoặc_Admin_báo_hộ>",
+    "date": "2026-11-20",
+    "shift": "MORNING",
+    "reason": "Bận việc gia đình đột xuất"
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `201 Created`: Trả về `{ message, data, warning, conflictingServices }`. Nếu nhân sự đang có ca `Waiting` / `InProgress` trong ngày/ca đó, BE vẫn tạo bản ghi và trả thêm chuỗi `warning` + mảng `conflictingServices` để giao diện cảnh báo đổi người.
+  - `400 Bad Request`: Ngày ở trong quá khứ hoặc `shift` sai giá trị.
+  - `409 Conflict`: Nhân sự đã báo bận đúng ca và ngày đó rồi.
+
+### 12.2. Xem danh sách lịch báo bận (`GET /api/staff-schedules` & `GET /api/staff-schedules/me`)
+- **URL**: `http://localhost:9999/api/staff-schedules?staffId=...&date=2026-11-20&shift=MORNING&from=2026-11-20&to=2026-11-27` *(hoặc `/api/staff-schedules/me` để Vet/Groomer xem lịch của chính mình)*
+- **Auth**: 🔒 `Veterinarian`, `Groomer`, `Receptionist`, `Admin`
+
+### 12.3. Hủy lịch báo bận (`DELETE /api/staff-schedules/:id`)
+- **Auth**: 🔒 `Veterinarian`, `Groomer` (chỉ hủy của chính mình), `Receptionist`, `Admin`
+- **Kết quả mong đợi**: `200 OK` — Xóa khỏi blacklist để nhân sự xuất hiện lại trên danh sách điều phối ca đó.
+
 
 

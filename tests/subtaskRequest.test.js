@@ -551,5 +551,41 @@ describe('PB-10: Sub-task Cận lâm sàng / Dịch vụ phụ (/api/subtask-req
       const found = await SubtaskRequest.findById(pendingSubtaskToDeleteId).lean();
       expect(found).toBeNull();
     });
+
+    it('chỉ cho phép giao Sub-task kèm serviceId cho nhân sự đúng vai trò requiredRole của dịch vụ đó (400 / 201)', async () => {
+      const groomingSubSvc = await Service.create({
+        code: 'SRV-SUBG01',
+        name: 'Cắt tỉa vệ sinh vùng bệnh',
+        category: 'Grooming',
+        requiredRole: 'Groomer',
+        basePrice: 90000,
+        status: 'Active',
+      });
+
+      // Giao dịch vụ Grooming cho Veterinarian -> bị chặn 400
+      const mismatchRes = await request(app)
+        .post('/api/subtask-requests')
+        .set('Authorization', `Bearer ${mainVetToken}`)
+        .send({
+          appointmentServiceId: String(waitingApptService._id),
+          serviceId: String(groomingSubSvc._id),
+          assignedStaffId: String(labVetUser._id),
+          taskType: 'Cắt tỉa vệ sinh',
+        });
+      expect(mismatchRes.status).toBe(400);
+
+      // Giao đúng cho Groomer -> thành công 201
+      const matchRes = await request(app)
+        .post('/api/subtask-requests')
+        .set('Authorization', `Bearer ${mainVetToken}`)
+        .send({
+          appointmentServiceId: String(waitingApptService._id),
+          serviceId: String(groomingSubSvc._id),
+          assignedStaffId: String(groomerUser._id),
+          taskType: 'Cắt tỉa vệ sinh',
+        });
+      expect(matchRes.status).toBe(201);
+      expect(matchRes.body.data.serviceId.requiredRole).toBe('Groomer');
+    });
   });
 });

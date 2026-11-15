@@ -111,8 +111,8 @@ const validateMedicalRecordPayload = (body = {}, { requireAllSoap = false } = {}
     };
   }
 
+  // Chữ S (subjectiveNote) được hệ thống tự điền từ kê khai tiếp nhận và khóa chỉ đọc (read-only), không cho phép sửa từ client
   const soapFields = [
-    { key: 'subjectiveNote', label: 'Triệu chứng chủ quan (Subjective - S)' },
     { key: 'objectiveNote', label: 'Kết quả khám lâm sàng (Objective - O)' },
     { key: 'assessment', label: 'Chẩn đoán bệnh (Assessment - A)' },
     { key: 'plan', label: 'Phác đồ điều trị (Plan - P)' },
