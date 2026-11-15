@@ -412,7 +412,7 @@ describe('createOnlineAppointment - receptionist notification', () => {
   });
 
   describe('recipient lookup', () => {
-    it('looks up only active receptionists that have an email, selecting just the email', async () => {
+    it('looks up only active receptionists with a verified email, selecting just the email', async () => {
       const { select } = mockReceptionists(receptionists);
 
       await service.createOnlineAppointment(OWNER_ID, input);
@@ -422,6 +422,7 @@ describe('createOnlineAppointment - receptionist notification', () => {
       expect(User.find).toHaveBeenCalledWith({
         role: 'Receptionist',
         status: 'Active',
+        isEmailVerified: true,
         email: { $type: 'string' },
       });
       expect(select).toHaveBeenCalledWith('email');
