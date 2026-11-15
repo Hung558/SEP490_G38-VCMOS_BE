@@ -81,6 +81,9 @@ const checkInBooking = async (req, res) => {
       staffId: req.user?.id,
       requiresIsolation: value.requiresIsolation,
       intake: value.intake,
+      note: value.note,
+      assignedStaffId: value.assignedStaffId,
+      serviceAssignments: value.serviceAssignments,
     });
 
     return res.json({ message: 'Check-in thành công', data: appointment });

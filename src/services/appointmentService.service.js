@@ -246,9 +246,8 @@ async function assignStaffToAppointmentService({ appointmentServiceId, assignedS
     queueNo: nextQueueNo,
   };
 
-  // Nếu đơn hẹn đã Check-in hoặc đang InProgress thì chuyển luôn sang Waiting;
-  // còn nếu đơn đang là Booked (Lễ tân xếp sẵn bác sĩ trước khi khách đến) thì giữ status = 'Booked',
-  // đến khi khách tới bấm Check-in sẽ tự động nhảy sang 'Waiting'
+  // Phân công nhân sự sau khi đơn đã Check-in hoặc đang InProgress:
+  // đẩy dịch vụ sang Waiting và ghi nhận enqueueAt để Bác sĩ / Groomer thấy trên Work Queue
   if (orderStatus === 'CheckedIn' || orderStatus === 'InProgress') {
     fieldsToSet.status = 'Waiting';
     fieldsToSet.enqueueAt = new Date();

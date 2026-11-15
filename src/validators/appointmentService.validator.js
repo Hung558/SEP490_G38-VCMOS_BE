@@ -289,12 +289,18 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
     );
   }
 
-  // 2. Kiểm tra đơn lịch hẹn không nằm ở trạng thái đã đóng
+  // 2. Kiểm tra đơn lịch hẹn đã Check-in và chưa đóng (chỉ phân công sau khi khách đã Check-in)
   const order = await AppointmentOrder.findById(appointmentService.orderId)
     .select('derivedStatus')
     .lean();
   if (!order) {
     throw createError('Không tìm thấy lịch hẹn', 404);
+  }
+  if (order.derivedStatus === 'Booked') {
+    throw createError(
+      'Vui lòng thực hiện Check-in lịch hẹn trước khi phân công bác sĩ hoặc nhân sự',
+      409
+    );
   }
   if (BLOCKED_ORDER_STATUSES.includes(order.derivedStatus)) {
     throw createError(

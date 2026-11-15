@@ -21,6 +21,8 @@ const appointmentOrderSchema = new mongoose.Schema(
     slotEnd: { type: String, default: null },
     note: String,
     intake: { type: intakeSchema, default: null },
+    // Chuồng giữ chỗ dự kiến theo ngày hẹn khi khách đặt lịch online (không khóa chuồng vật lý của ngày khác)
+    reservedCageId: { type: mongoose.Schema.Types.ObjectId, ref: 'Cage', default: null },
     isOnline: { type: Boolean, default: false },
     derivedStatus: {
       type: String,
@@ -38,5 +40,6 @@ const appointmentOrderSchema = new mongoose.Schema(
 appointmentOrderSchema.index({ petId: 1, date: 1 });
 appointmentOrderSchema.index({ ownerId: 1, date: 1 });
 appointmentOrderSchema.index({ date: 1, derivedStatus: 1 });
+appointmentOrderSchema.index({ date: 1, reservedCageId: 1 });
 
 module.exports = mongoose.model('AppointmentOrder', appointmentOrderSchema, 'appointment_orders');
