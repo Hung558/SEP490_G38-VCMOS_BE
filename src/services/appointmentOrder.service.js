@@ -116,7 +116,13 @@ const sendNewAppointmentEmail = async (recipients, { appointment, ownerName, own
 const notifyReceptionistsOfNewAppointment = async (appointment, pet) => {
   try {
     const [receptionists, owner] = await Promise.all([
-      User.find({ role: 'Receptionist', status: 'Active', email: { $type: 'string' } })
+      // Chỉ gửi thông báo cho lễ tân đã xác thực email để tránh gửi vào email ảo trong DB
+      User.find({
+        role: 'Receptionist',
+        status: 'Active',
+        isEmailVerified: true,
+        email: { $type: 'string' },
+      })
         .select('email')
         .lean(),
       User.findById(appointment.ownerId).select('fullName phone').lean(),
