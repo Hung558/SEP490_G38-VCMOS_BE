@@ -1,6 +1,7 @@
 const { isBlank } = require('./auth.validator');
 
 const SERVICE_CATEGORIES = ['Examination', 'Vaccination', 'Grooming', 'Paraclinical', 'Inpatient'];
+const SERVICE_ROLES = ['Veterinarian', 'Groomer'];
 const SERVICE_STATUSES = ['Active', 'Inactive'];
 const MIN_SERVICE_NAME = 3;
 const MAX_SERVICE_NAME = 100;
@@ -9,7 +10,15 @@ const MAX_DURATION = 480;
 const MAX_DESCRIPTION = 500;
 
 // SCR-29 & UC-66: Validate dữ liệu khi Admin thêm mới dịch vụ
-const validateCreateService = ({ name, category, defaultDuration, basePrice, description, status } = {}) => {
+const validateCreateService = ({
+  name,
+  category,
+  requiredRole,
+  defaultDuration,
+  basePrice,
+  description,
+  status,
+} = {}) => {
   const errors = {};
 
   if (isBlank(name)) {
@@ -61,6 +70,12 @@ const validateCreateService = ({ name, category, defaultDuration, basePrice, des
     }
   }
 
+  if (requiredRole !== undefined && requiredRole !== null && requiredRole !== '') {
+    if (!SERVICE_ROLES.includes(requiredRole)) {
+      errors.requiredRole = `Vai trò thực hiện phải là một trong: ${SERVICE_ROLES.join(', ')}`;
+    }
+  }
+
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
@@ -84,6 +99,7 @@ const validateUpdateServiceStatus = ({ status } = {}) => {
 
 module.exports = {
   SERVICE_CATEGORIES,
+  SERVICE_ROLES,
   SERVICE_STATUSES,
   validateCreateService,
   validateUpdateService,

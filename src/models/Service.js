@@ -9,6 +9,14 @@ const serviceSchema = new mongoose.Schema(
       enum: ['Examination', 'Vaccination', 'Grooming', 'Paraclinical', 'Inpatient'],
       required: true,
     },
+    // Quy định vai trò nhân sự được phép thực hiện dịch vụ khi điều phối / giao subtask
+    requiredRole: {
+      type: String,
+      enum: ['Veterinarian', 'Groomer'],
+      default: function defaultRequiredRole() {
+        return this.category === 'Grooming' ? 'Groomer' : 'Veterinarian';
+      },
+    },
     defaultDuration: { type: Number, min: 0 },
     basePrice: { type: Number, min: 0 },
     status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },

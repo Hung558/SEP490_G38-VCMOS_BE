@@ -16,6 +16,18 @@ const httpError = (statusCode, message, errors) => {
 };
 
 /**
+ * Trích xuất nguyên văn ghi chú tiếp nhận / triệu chứng ban đầu từ AppointmentOrder
+ * để tự động điền vào mục S (Subjective) của bệnh án và khóa chỉ đọc đối với bác sĩ.
+ */
+const extractIntakeSubjectiveNote = (order) => {
+  if (!order) return '';
+  const intakeSymptoms =
+    typeof order.intake?.symptoms === 'string' ? order.intake.symptoms.trim() : '';
+  if (intakeSymptoms) return intakeSymptoms;
+  return typeof order.note === 'string' ? order.note.trim() : '';
+};
+
+/**
  * Kiểm tra danh sách thuốc kê đơn (UC-36, BR-16):
  * - Chỉ cho phép chọn thuốc/sản phẩm đang Active (Còn hàng).
  * - Chụp lại tên thuốc (productNameSnapshot) và đơn vị tính (unitSnapshot).
@@ -175,15 +187,23 @@ const startMedicalConsultation = async (staffId, appointmentServiceId) => {
     $set: { derivedStatus: 'InProgress' },
   });
 
-  // Tạo sẵn bản nháp (Draft) MedicalRecord nếu chưa tồn tại
+  // Tạo sẵn bản nháp (Draft) MedicalRecord nếu chưa tồn tại và tự động copy ghi chú tiếp nhận vào chữ S
+  const intakeSubjectiveNote = extractIntakeSubjectiveNote(order);
   let medicalRecord = await MedicalRecord.findOne({ appointmentServiceId }).lean();
   if (!medicalRecord) {
     const created = await MedicalRecord.create({
       appointmentServiceId,
       petId: order.petId,
+      subjectiveNote: intakeSubjectiveNote,
       status: 'Draft',
     });
     medicalRecord = created.toObject();
+  } else if (isBlank(medicalRecord.subjectiveNote) && intakeSubjectiveNote) {
+    medicalRecord = await MedicalRecord.findByIdAndUpdate(
+      medicalRecord._id,
+      { $set: { subjectiveNote: intakeSubjectiveNote } },
+      { returnDocument: 'after' }
+    ).lean();
   }
 
   return {
@@ -255,7 +275,10 @@ const saveDraftMedicalRecord = async (staffId, appointmentServiceId, payload) =>
     status: 'Draft',
   };
 
-  if (payload.subjectiveNote !== undefined) updateFields.subjectiveNote = payload.subjectiveNote;
+  // Khóa chữ S (subjectiveNote): chỉ tự động điền khi chưa có bản nháp, không cho phép ghi đè khi cập nhật
+  if (!existingRecord) {
+    updateFields.subjectiveNote = extractIntakeSubjectiveNote(order);
+  }
   if (payload.objectiveNote !== undefined) updateFields.objectiveNote = payload.objectiveNote;
   if (payload.assessment !== undefined) updateFields.assessment = payload.assessment;
   if (payload.plan !== undefined) updateFields.plan = payload.plan;
@@ -321,9 +344,10 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
     throw httpError(409, 'Bệnh án này đã được chốt (Finalized) trước đó');
   }
 
-  // Gộp dữ liệu gửi lên lần cuối với bản nháp đã lưu (nếu có)
-  const finalSubjective =
-    payload.subjectiveNote !== undefined ? payload.subjectiveNote : existingRecord?.subjectiveNote;
+  // Gộp dữ liệu gửi lên lần cuối với bản nháp đã lưu (riêng chữ S luôn giữ nguyên từ bản nháp / đơn hẹn, không cho sửa đè)
+  const finalSubjective = existingRecord
+    ? existingRecord.subjectiveNote || ''
+    : extractIntakeSubjectiveNote(order);
   const finalObjective =
     payload.objectiveNote !== undefined ? payload.objectiveNote : existingRecord?.objectiveNote;
   const finalAssessment =
@@ -333,11 +357,8 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
   const finalNotes =
     payload.notes !== undefined ? payload.notes : existingRecord?.notes;
 
-  // BR-13: Bắt buộc phải nhập đủ cả 4 trường S, O, A, P trước khi hoàn tất bệnh án
+  // BR-13: Bắt buộc bác sĩ nhập đủ O, A, P trước khi hoàn tất bệnh án (chữ S do lễ tân/khách khai và đã khóa read-only)
   const soapErrors = {};
-  if (isBlank(finalSubjective)) {
-    soapErrors.subjectiveNote = 'Bắt buộc nhập Triệu chứng chủ quan (Subjective - S) khi hoàn tất bệnh án';
-  }
   if (isBlank(finalObjective)) {
     soapErrors.objectiveNote = 'Bắt buộc nhập Kết quả khám lâm sàng (Objective - O) khi hoàn tất bệnh án';
   }
@@ -351,7 +372,7 @@ const completeMedicalConsultation = async (staffId, appointmentServiceId, payloa
   if (Object.keys(soapErrors).length > 0) {
     throw httpError(
       400,
-      'Vui lòng nhập đầy đủ 4 thông tin S - O - A - P trước khi hoàn tất bệnh án',
+      'Vui lòng nhập đầy đủ thông tin O - A - P trước khi hoàn tất bệnh án',
       soapErrors
     );
   }

@@ -2,8 +2,15 @@ const SubtaskRequest = require('../models/SubtaskRequest');
 const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const MedicalRecord = require('../models/MedicalRecord');
+const Service = require('../models/Service');
 const User = require('../models/User');
 const cloudinary = require('../config/cloudinary');
+const { resolveServiceRequiredRole } = require('./service.service');
+const {
+  findStaffBusyBlock,
+  getShiftFromTime,
+  currentTimeVN,
+} = require('./staffSchedule.service');
 
 const SUBTASK_STAFF_ROLES = ['Veterinarian', 'Groomer'];
 const SUBTASK_CLOUDINARY_FOLDER = 'subtask-results';
@@ -11,11 +18,12 @@ const SUBTASK_CLOUDINARY_FOLDER = 'subtask-results';
 const SUBTASK_POPULATE = [
   { path: 'requestedById', select: 'code fullName role' },
   { path: 'assignedStaffId', select: 'code fullName role' },
+  { path: 'serviceId', select: 'code name category requiredRole' },
   {
     path: 'appointmentServiceId',
     select: 'orderId serviceId sequenceNo status isEmergency',
     populate: [
-      { path: 'serviceId', select: 'code name category' },
+      { path: 'serviceId', select: 'code name category requiredRole' },
       {
         path: 'orderId',
         select: 'code date derivedStatus petId ownerId note intake',
@@ -62,10 +70,10 @@ const findPopulatedSubtaskById = (subtaskId) =>
  * - Nhân sự thực hiện phải đang Active và có vai trò Veterinarian hoặc Groomer.
  */
 const createSubtaskRequest = async (requesterId, payload) => {
-  const { appointmentServiceId, assignedStaffId, taskType, instructions } = payload;
+  const { appointmentServiceId, serviceId, assignedStaffId, taskType, instructions } = payload;
 
   const appointmentService = await AppointmentService.findById(appointmentServiceId)
-    .select('orderId assignedStaffId status')
+    .select('orderId assignedStaffId status scheduledStart')
     .lean();
 
   if (!appointmentService) {
@@ -93,7 +101,7 @@ const createSubtaskRequest = async (requesterId, payload) => {
     throw httpError(409, 'Bệnh án của ca khám này đã được khóa (Finalized), không thể tạo thêm yêu cầu');
   }
 
-  const assignedStaff = await User.findById(assignedStaffId).select('role status').lean();
+  const assignedStaff = await User.findById(assignedStaffId).select('fullName role status').lean();
   if (!assignedStaff) {
     throw httpError(404, 'Không tìm thấy nhân sự được phân công');
   }
@@ -107,8 +115,49 @@ const createSubtaskRequest = async (requesterId, payload) => {
     throw httpError(400, 'Nhân sự được phân công hiện không ở trạng thái hoạt động (Active)');
   }
 
+  if (serviceId) {
+    const requestedService = await Service.findById(serviceId)
+      .select('name category requiredRole status')
+      .lean();
+    if (!requestedService) {
+      throw httpError(404, 'Không tìm thấy dịch vụ được chỉ định cho công việc phụ');
+    }
+    if (requestedService.status !== 'Active') {
+      throw httpError(400, `Dịch vụ "${requestedService.name}" hiện không hoạt động`);
+    }
+    const expectedRole = resolveServiceRequiredRole(requestedService);
+    if (expectedRole && assignedStaff.role !== expectedRole) {
+      throw httpError(
+        400,
+        `Dịch vụ "${requestedService.name}" yêu cầu nhân sự có vai trò ${expectedRole}`
+      );
+    }
+  }
+
+  // Kiểm tra nhân sự có báo bận vào ca thực hiện hôm đó không (StaffSchedule Blacklist)
+  const parentOrder = await AppointmentOrder.findById(appointmentService.orderId)
+    .select('date slotStart')
+    .lean();
+  if (parentOrder && parentOrder.date) {
+    const targetShift = getShiftFromTime(
+      appointmentService.scheduledStart || parentOrder.slotStart || currentTimeVN()
+    );
+    const busyRecord = await findStaffBusyBlock({
+      staffId: assignedStaffId,
+      date: parentOrder.date,
+      shift: targetShift,
+    });
+    if (busyRecord) {
+      throw httpError(
+        409,
+        `Nhân sự "${assignedStaff.fullName}" đã báo bận vào ca ${targetShift} ngày ${parentOrder.date}`
+      );
+    }
+  }
+
   const created = await SubtaskRequest.create({
     appointmentServiceId,
+    serviceId: serviceId || null,
     requestedById: requesterId,
     assignedStaffId,
     taskType,

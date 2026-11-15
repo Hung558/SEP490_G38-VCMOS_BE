@@ -142,12 +142,12 @@ describe('Appointment Symptom Note & Reception Check-in Intake Flow', () => {
     expect(res.body.data.appointment.intake).toBeNull();
   });
 
-  test('3. Chặn phân công bác sĩ khi đơn còn Booked (409) và check-in thất bại (400) nếu gửi intake rỗng hoặc vượt 500 ký tự', async () => {
+  test('3. Chặn phân công bác sĩ khi đơn còn Booked (400) và check-in thất bại (400) nếu gửi intake rỗng hoặc vượt 500 ký tự', async () => {
     const assignBeforeCheckInRes = await request(app)
       .patch(`/api/appointment-services/${onlineServiceId}/assign-staff`)
       .set('Authorization', `Bearer ${receptionistToken}`)
       .send({ assignedStaffId: vetUser._id });
-    expect(assignBeforeCheckInRes.status).toBe(409);
+    expect(assignBeforeCheckInRes.status).toBe(400);
 
     const blankRes = await request(app)
       .patch(`/api/appointment-orders/${onlineOrderId}/check-in`)
@@ -521,12 +521,12 @@ describe('Nhóm 1: Vá các lỗi logic đặt lịch, check-in, phân công, b�
     const step1ServiceId = bookingRes.body.data.services[0]._id;
     const step2ServiceId = bookingRes.body.data.services[1]._id;
 
-    // 1. Chưa check-in (Booked) không được gọi assign-staff -> bị chặn 409
+    // 1. Chưa check-in (Booked) không được gọi assign-staff -> bị chặn 400
     const assignBeforeCheckInRes = await request(app)
       .patch(`/api/appointment-services/${step1ServiceId}/assign-staff`)
       .set('Authorization', `Bearer ${receptionistToken}`)
       .send({ assignedStaffId: vetUser._id });
-    expect(assignBeforeCheckInRes.status).toBe(409);
+    expect(assignBeforeCheckInRes.status).toBe(400);
 
     // 2. Chưa check-in (chưa phân công bác sĩ) mà bác sĩ gọi start -> bị chặn 403
     const startBeforeCheckInRes = await request(app)

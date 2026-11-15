@@ -81,9 +81,10 @@ describe('Service Catalogue Management (/api/services - SCR-29, SCR-02, UC-66, U
       });
 
     expect(res.status).toBe(201);
-    expect(res.body.service).toMatchObject({
+      expect(res.body.service).toMatchObject({
       name: 'Khám tổng quát thú cưng',
       category: 'Examination',
+      requiredRole: 'Veterinarian',
       defaultDuration: 30,
       basePrice: 150000,
       description: 'Khám lâm sàng toàn diện cho chó mèo',
@@ -92,7 +93,7 @@ describe('Service Catalogue Management (/api/services - SCR-29, SCR-02, UC-66, U
     expect(res.body.service.code).toMatch(/^SRV-[A-Z0-9]{6}$/);
     createdServiceId = res.body.service._id;
 
-    // Tạo thêm 1 dịch vụ thuộc danh mục khác (Grooming) nhưng trùng tên vẫn được phép
+    // Tạo thêm 1 dịch vụ thuộc danh mục khác (Grooming) nhưng trùng tên vẫn được phép -> tự mặc định requiredRole = 'Groomer'
     const sameNameDifferentCategory = await request(app)
       .post('/api/services')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -103,6 +104,7 @@ describe('Service Catalogue Management (/api/services - SCR-29, SCR-02, UC-66, U
         basePrice: 250000,
       });
     expect(sameNameDifferentCategory.status).toBe(201);
+    expect(sameNameDifferentCategory.body.service.requiredRole).toBe('Groomer');
   });
 
   test('POST /api/services: báo lỗi 400 nếu sai dữ liệu (duration ngoài 5-480, giá âm, sai category) và 409 nếu trùng tên trong cùng danh mục', async () => {

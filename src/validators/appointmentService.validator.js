@@ -291,7 +291,7 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
 
   // 2. Kiểm tra đơn lịch hẹn đã Check-in và chưa đóng (chỉ phân công sau khi khách đã Check-in)
   const order = await AppointmentOrder.findById(appointmentService.orderId)
-    .select('derivedStatus')
+    .select('derivedStatus date slotStart')
     .lean();
   if (!order) {
     throw createError('Không tìm thấy lịch hẹn', 404);
@@ -299,7 +299,7 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
   if (order.derivedStatus === 'Booked') {
     throw createError(
       'Vui lòng thực hiện Check-in lịch hẹn trước khi phân công bác sĩ hoặc nhân sự',
-      409
+      400
     );
   }
   if (BLOCKED_ORDER_STATUSES.includes(order.derivedStatus)) {
@@ -310,7 +310,7 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
   }
 
   // 3. Kiểm tra nhân sự được chọn có tồn tại, đang Active và đúng role Bác sĩ / Groomer khớp loại dịch vụ
-  const staff = await User.findById(assignedStaffId).select('role status').lean();
+  const staff = await User.findById(assignedStaffId).select('fullName role status').lean();
   if (!staff) {
     throw createError('Không tìm thấy nhân viên được phân công', 404);
   }
@@ -323,19 +323,36 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
 
   if (appointmentService.serviceId && typeof Service.findById === 'function') {
     const service = await Service.findById(appointmentService.serviceId)
-      .select('name category')
+      .select('name category requiredRole')
       .lean();
     if (service) {
-      if (service.category === 'Grooming' && staff.role !== 'Groomer') {
+      const { resolveServiceRequiredRole } = require('../services/service.service');
+      const expectedRole = resolveServiceRequiredRole(service);
+      if (expectedRole && staff.role !== expectedRole) {
         throw createError(
-          `Dịch vụ "${service.name}" (Grooming) chỉ được phân công cho nhân viên Groomer`
+          `Dịch vụ "${service.name}" (${service.category}) chỉ được phân công cho nhân sự có vai trò ${expectedRole}`
         );
       }
-      if (service.category !== 'Grooming' && staff.role !== 'Veterinarian') {
-        throw createError(
-          `Dịch vụ "${service.name}" (${service.category}) chỉ được phân công cho Bác sĩ thú y (Veterinarian)`
-        );
-      }
+    }
+  }
+
+  if (order.date) {
+    const {
+      findStaffBusyBlock,
+      getShiftFromTime,
+      currentTimeVN,
+    } = require('../services/staffSchedule.service');
+    const targetShift = getShiftFromTime(order.slotStart || currentTimeVN());
+    const busyBlock = await findStaffBusyBlock({
+      staffId: assignedStaffId,
+      date: order.date,
+      shift: targetShift,
+    });
+    if (busyBlock) {
+      throw createError(
+        `Nhân sự "${staff.fullName}" đã báo bận vào ca ${targetShift} ngày ${order.date}`,
+        409
+      );
     }
   }
 

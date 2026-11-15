@@ -1,3 +1,4 @@
+const { isValidObjectId } = require('mongoose');
 const {
   PHONE_REGEX,
   EMAIL_REGEX,
@@ -10,6 +11,7 @@ const {
 const OTP_REGEX = /^\d{6}$/;
 
 const STAFF_ROLES = ['Veterinarian', 'Groomer'];
+const SHIFT_VALUES = ['MORNING', 'AFTERNOON', 'EVENING'];
 const USER_STATUSES = ['Active', 'Inactive', 'Locked'];
 const MAX_PAGE_SIZE = 100;
 const MAX_SEARCH = 100;
@@ -95,7 +97,7 @@ const validateChangeMyPassword = ({ otp, currentPassword, newPassword } = {}) =>
   return { isValid: Object.keys(errors).length === 0, errors };
 };
 
-const validateListStaff = ({ role, status, search, workDate, page, limit } = {}) => {
+const validateListStaff = ({ role, status, search, workDate, date, shift, time, serviceId, page, limit } = {}) => {
   const errors = {};
 
   if (role !== undefined && !STAFF_ROLES.includes(role)) {
@@ -109,6 +111,18 @@ const validateListStaff = ({ role, status, search, workDate, page, limit } = {})
   }
   if (workDate !== undefined && (typeof workDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(workDate.trim()))) {
     errors.workDate = 'Ngày làm việc (workDate) phải đúng định dạng YYYY-MM-DD';
+  }
+  if (date !== undefined && (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date.trim()))) {
+    errors.date = 'Ngày kiểm tra lịch (date) phải đúng định dạng YYYY-MM-DD';
+  }
+  if (shift !== undefined && (typeof shift !== 'string' || !SHIFT_VALUES.includes(shift.trim().toUpperCase()))) {
+    errors.shift = `Ca làm việc (shift) phải là một trong: ${SHIFT_VALUES.join(', ')}`;
+  }
+  if (time !== undefined && (typeof time !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time.trim()))) {
+    errors.time = 'Giờ lọc ca (time) phải đúng định dạng HH:mm';
+  }
+  if (serviceId !== undefined && (typeof serviceId !== 'string' || !isValidObjectId(serviceId.trim()))) {
+    errors.serviceId = 'Mã dịch vụ (serviceId) không hợp lệ';
   }
   if (page !== undefined && !/^\d+$/.test(page)) errors.page = 'page phải là số nguyên dương';
   else if (page !== undefined && Number(page) < 1) errors.page = 'page phải là số nguyên dương';

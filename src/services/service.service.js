@@ -14,6 +14,15 @@ const httpError = (statusCode, message) => {
   return error;
 };
 
+// Suy diễn vai trò mặc định nếu dịch vụ cũ trong DB chưa có trường requiredRole
+const resolveServiceRequiredRole = (service) => {
+  if (!service) return null;
+  if (service.requiredRole === 'Veterinarian' || service.requiredRole === 'Groomer') {
+    return service.requiredRole;
+  }
+  return service.category === 'Grooming' ? 'Groomer' : 'Veterinarian';
+};
+
 // BR-24: Tự động sinh mã dịch vụ định dạng SRV-XXXXXX
 const generateServiceCode = () => {
   let suffix = '';
@@ -69,7 +78,7 @@ const getServiceById = async (serviceId) => {
 };
 
 // SCR-29 & UC-66: Admin tạo dịch vụ mới (tự sinh mã SRV-XXXXXX, kiểm tra trùng tên trong cùng danh mục)
-const createService = async ({ name, category, defaultDuration, basePrice, description, status }) => {
+const createService = async ({ name, category, requiredRole, defaultDuration, basePrice, description, status }) => {
   const trimmedName = name.trim();
   const normalizedDescription = description ? description.trim() : undefined;
 
@@ -86,7 +95,7 @@ const createService = async ({ name, category, defaultDuration, basePrice, descr
 
   for (let attempt = 1; attempt <= MAX_CODE_RETRIES; attempt++) {
     try {
-      const created = await Service.create({
+      const payloadToCreate = {
         code: generateServiceCode(),
         name: trimmedName,
         category,
@@ -94,7 +103,12 @@ const createService = async ({ name, category, defaultDuration, basePrice, descr
         basePrice: Number(basePrice),
         description: normalizedDescription,
         status: status || 'Active',
-      });
+      };
+      if (requiredRole !== undefined && requiredRole !== null && requiredRole !== '') {
+        payloadToCreate.requiredRole = requiredRole;
+      }
+
+      const created = await Service.create(payloadToCreate);
 
       return created.toObject();
     } catch (error) {
@@ -114,7 +128,7 @@ const createService = async ({ name, category, defaultDuration, basePrice, descr
 };
 
 // SCR-29 & UC-66: Admin cập nhật thông tin dịch vụ (không được sửa mã code)
-const updateService = async (serviceId, { name, category, defaultDuration, basePrice, description, status }) => {
+const updateService = async (serviceId, { name, category, requiredRole, defaultDuration, basePrice, description, status }) => {
   if (!mongoose.Types.ObjectId.isValid(serviceId)) {
     throw httpError(400, 'ID dịch vụ không hợp lệ');
   }
@@ -148,6 +162,11 @@ const updateService = async (serviceId, { name, category, defaultDuration, baseP
 
   if (status !== undefined && status !== null && status !== '') {
     fieldsToSet.status = status;
+  }
+  if (requiredRole !== undefined && requiredRole !== null && requiredRole !== '') {
+    fieldsToSet.requiredRole = requiredRole;
+  } else if (existingService.category && existingService.category !== category) {
+    fieldsToSet.requiredRole = category === 'Grooming' ? 'Groomer' : 'Veterinarian';
   }
 
   try {
@@ -184,6 +203,7 @@ const updateServiceStatus = async (serviceId, status) => {
 };
 
 module.exports = {
+  resolveServiceRequiredRole,
   generateServiceCode,
   getAllServices,
   getServiceById,

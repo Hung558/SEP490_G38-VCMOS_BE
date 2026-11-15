@@ -37,20 +37,27 @@ const createCageAssignment = async ({
   assignedById,
   petWeight,
   requiresIsolation,
+  session = null,
 }) => {
   assertValidId(cageId, 'ID chuồng');
   assertValidId(orderId, 'ID đơn hẹn');
   assertValidId(assignedById, 'ID người phân công');
 
+  const updateOpts = session ? { new: true, session } : { new: true };
+  const sessionOpt = session ? { session } : undefined;
+
   // Atomically claim the cage: only succeeds if it is currently Available
   const cage = await Cage.findOneAndUpdate(
     { _id: cageId, status: 'Available' },
     { $set: { status: 'Occupied' } },
-    { new: true }
+    updateOpts
   );
 
   if (!cage) {
-    const exists = await Cage.exists({ _id: cageId });
+    const existsQuery = Cage.exists({ _id: cageId });
+    const exists = session && existsQuery && typeof existsQuery.session === 'function'
+      ? await existsQuery.session(session)
+      : await existsQuery;
     if (!exists) throw createError(404, 'Không tìm thấy chuồng');
     throw createError(409, 'Chuồng không ở trạng thái trống (Available)');
   }
@@ -65,21 +72,22 @@ const createCageAssignment = async ({
       cage.maxWeightKg
     );
     if (!check.allowed) {
-      await Cage.updateOne({ _id: cageId }, { $set: { status: 'Available' } });
+      await Cage.updateOne({ _id: cageId }, { $set: { status: 'Available' } }, sessionOpt);
       throw createError(400, check.reason);
     }
   }
 
   try {
-    const assignment = await CageAssignment.create({
-      cageId,
-      orderId,
-      assignedById,
-    });
-    return await assignment.populate(populateOptions);
+    const payload = { cageId, orderId, assignedById };
+    const created = session
+      ? (await CageAssignment.create([payload], { session }))[0]
+      : await CageAssignment.create(payload);
+    return await created.populate(populateOptions);
   } catch (err) {
     // Roll back so the cage is not stuck as Occupied without an assignment
-    await Cage.updateOne({ _id: cageId }, { $set: { status: 'Available' } });
+    if (!session) {
+      await Cage.updateOne({ _id: cageId }, { $set: { status: 'Available' } });
+    }
 
     // Unique partial index violation: cage already has an open assignment
     if (err.code === 11000) {

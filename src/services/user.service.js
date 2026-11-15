@@ -283,17 +283,70 @@ const changeMyPassword = async (userId, currentPassword, newPassword, otp) => {
   });
 };
 
-// Danh sách nhân viên (Veterinarian, Groomer) có phân trang, lọc theo role/status, tìm theo tên/mã/SĐT và lọc theo ngày trực workDate
-const listStaff = async ({ role, status = 'Active', search, workDate, page = 1, limit = 10 }) => {
+// Danh sách nhân viên (Veterinarian, Groomer) khả dụng:
+// - Lọc theo vai trò của serviceId (nếu truyền) hoặc role
+// - Loại trừ nhân sự đã báo bận trong StaffSchedule theo (date/workDate, shift/time)
+// - Tìm theo tên/mã/SĐT và phân trang
+const listStaff = async ({
+  role,
+  status = 'Active',
+  search,
+  workDate,
+  date,
+  shift,
+  time,
+  serviceId,
+  page = 1,
+  limit = 10,
+}) => {
+  let effectiveRole = role || { $in: STAFF_ROLES };
+
+  if (serviceId) {
+    const Service = require('../models/Service');
+    const { resolveServiceRequiredRole } = require('./service.service');
+    const service = await Service.findById(serviceId).select('category requiredRole').lean();
+    if (!service) {
+      const error = new Error('Không tìm thấy dịch vụ');
+      error.statusCode = 404;
+      throw error;
+    }
+    const requiredRole = resolveServiceRequiredRole(service);
+    if (role && role !== requiredRole) {
+      return {
+        items: [],
+        pagination: { page, limit, total: 0, totalPages: 0 },
+      };
+    }
+    effectiveRole = requiredRole;
+  }
+
   const filter = {
-    role: role || { $in: STAFF_ROLES },
+    role: effectiveRole,
     status,
   };
 
-  if (workDate) {
-    const StaffSchedule = require('../models/StaffSchedule');
-    const schedules = await StaffSchedule.find({ workDate }).select('staffId').lean();
-    filter._id = { $in: schedules.map((s) => s.staffId) };
+  const targetDate = date || workDate;
+  if (targetDate || shift) {
+    const {
+      todayVN,
+      currentTimeVN,
+      getShiftFromTime,
+      findBusyStaffIds,
+    } = require('./staffSchedule.service');
+
+    const effectiveDate = targetDate || todayVN();
+    const effectiveShift =
+      shift ||
+      (time
+        ? getShiftFromTime(time)
+        : effectiveDate === todayVN()
+          ? getShiftFromTime(currentTimeVN())
+          : undefined);
+
+    const busyIds = await findBusyStaffIds({ date: effectiveDate, shift: effectiveShift });
+    if (busyIds.length > 0) {
+      filter._id = { $nin: busyIds };
+    }
   }
 
   const keyword = typeof search === 'string' ? search.trim() : '';
