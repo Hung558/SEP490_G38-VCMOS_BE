@@ -41,4 +41,46 @@ const validateListQuery = (query = {}) => {
   return { errors, value: { status, petId, attendingVetId, mine: mine === 'true', page, limit } };
 };
 
-module.exports = { validateCreate, validateListQuery, isId };
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const MAX_TEXT = 2000;
+
+// Đúng định dạng YYYY-MM-DD và là ngày có thật trên lịch (loại 2026-02-30)
+const isValidDateString = (v) => {
+  if (typeof v !== 'string' || !DATE_RE.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;
+};
+
+const validateCreateLog = (body = {}) => {
+  const errors = [];
+  const { date, observations, notes } = body;
+
+  if (date !== undefined && date !== null && !isValidDateString(date)) {
+    errors.push('date phải có định dạng YYYY-MM-DD và là ngày hợp lệ');
+  }
+  for (const [name, v] of [['observations', observations], ['notes', notes]]) {
+    if (!isOptText(v)) errors.push(`${name} phải là chuỗi`);
+    else if (typeof v === 'string' && v.trim().length > MAX_TEXT) {
+      errors.push(`${name} không được vượt quá ${MAX_TEXT} ký tự`);
+    }
+  }
+
+  const obs = typeof observations === 'string' ? observations.trim() : '';
+  const nt = typeof notes === 'string' ? notes.trim() : '';
+  if (!errors.length && !obs && !nt) errors.push('Cần nhập ít nhất observations hoặc notes');
+
+  return { errors, value: { date: date || undefined, observations: obs || undefined, notes: nt || undefined } };
+};
+
+const validateLogQuery = (query = {}) => {
+  const errors = [];
+  const { date, from, to } = query;
+  for (const [name, v] of [['date', date], ['from', from], ['to', to]]) {
+    if (v !== undefined && !isValidDateString(v)) errors.push(`${name} phải có định dạng YYYY-MM-DD và là ngày hợp lệ`);
+  }
+  if (!errors.length && from && to && from > to) errors.push('from không được sau to');
+  return { errors, value: { date, from, to } };
+};
+
+module.exports = { validateCreate, validateListQuery, validateCreateLog, validateLogQuery, isId };

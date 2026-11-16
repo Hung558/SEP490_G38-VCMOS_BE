@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 const InpatientRecord = require('../models/InpatientRecord');
 const User = require('../models/User');
@@ -213,4 +214,65 @@ const getById = async (id) => {
   return record;
 };
 
-module.exports = { create, list, getById, ServiceError };
+// Ngày theo giờ Việt Nam (UTC+7, không có DST) dạng YYYY-MM-DD
+const toVNDate = (d) => new Date(new Date(d).getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+
+const LOG_POPULATE = { path: 'dailyLogs.recordedById', select: 'code fullName' };
+
+/**
+ * Thêm nhật ký hằng ngày vào hồ sơ nội trú đang Admitted.
+ * recordedById luôn là bác sĩ đang đăng nhập; date mặc định là hôm nay (giờ VN).
+ */
+const createLog = async (recordId, vetId, data) => {
+  const record = await InpatientRecord.findById(recordId).select('status admittedAt').lean();
+  if (!record) throw new ServiceError(404, 'Không tìm thấy hồ sơ nội trú');
+  if (record.status !== 'Admitted') {
+    throw new ServiceError(400, 'Hồ sơ nội trú đã xuất viện, không thể thêm nhật ký');
+  }
+
+  const date = data.date || toVNDate(new Date());
+  if (date > toVNDate(new Date())) throw new ServiceError(400, 'Không thể ghi nhật ký cho ngày trong tương lai');
+  if (date < toVNDate(record.admittedAt)) {
+    throw new ServiceError(400, 'Ngày ghi nhật ký không được trước ngày nhập viện');
+  }
+
+  // Tạo _id trước để lấy đúng log vừa thêm, kể cả khi có request khác ghi đồng thời
+  const logId = new mongoose.Types.ObjectId();
+  const updated = await InpatientRecord.findOneAndUpdate(
+    { _id: recordId, status: 'Admitted' }, // chặn race với việc xuất viện
+    {
+      $push: {
+        dailyLogs: {
+          _id: logId,
+          date,
+          recordedById: vetId,
+          observations: data.observations,
+          notes: data.notes,
+        },
+      },
+    },
+    { new: true }
+  )
+    .select('dailyLogs')
+    .populate(LOG_POPULATE)
+    .lean();
+
+  if (!updated) throw new ServiceError(400, 'Hồ sơ nội trú đã xuất viện, không thể thêm nhật ký');
+  return updated.dailyLogs.find((l) => String(l._id) === String(logId));
+};
+
+// Danh sách nhật ký, mới nhất trước. Lọc theo date (đúng ngày) hoặc from/to (khoảng, gồm 2 đầu).
+const listLogs = async (recordId, { date, from, to }) => {
+  const record = await InpatientRecord.findById(recordId).select('dailyLogs').populate(LOG_POPULATE).lean();
+  if (!record) throw new ServiceError(404, 'Không tìm thấy hồ sơ nội trú');
+
+  const items = record.dailyLogs
+    .filter((l) => (date ? l.date === date : true))
+    .filter((l) => (from ? l.date >= from : true))
+    .filter((l) => (to ? l.date <= to : true))
+    .sort((a, b) => (a.date === b.date ? new Date(b.createdAt) - new Date(a.createdAt) : a.date < b.date ? 1 : -1));
+
+  return { items, total: items.length };
+};
+
+module.exports = { create, list, getById, createLog, listLogs, ServiceError };
