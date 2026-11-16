@@ -4,6 +4,7 @@ const {
   validateListQuery,
   validateCreateLog,
   validateLogQuery,
+  validateOwnerLogQuery,
   isId,
 } = require('../validators/inpatientRecord.validator');
 
@@ -73,4 +74,17 @@ const listLogs = async (req, res) => {
   }
 };
 
-module.exports = { create, list, getById, createLog, listLogs };
+// Chủ thú cưng xem nhật ký nội trú của thú cưng của mình
+const listMyPetLogs = async (req, res) => {
+  if (!isId(req.params.petId)) return res.status(400).json({ message: 'petId không hợp lệ' });
+  const { errors, value } = validateOwnerLogQuery(req.query);
+  if (errors.length) return res.status(400).json({ message: 'Dữ liệu không hợp lệ', errors });
+
+  try {
+    return res.json(await service.listLogsForOwner(req.user.id, req.params.petId, value));
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
+module.exports = { create, list, getById, createLog, listLogs, listMyPetLogs };

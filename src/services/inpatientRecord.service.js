@@ -261,18 +261,54 @@ const createLog = async (recordId, vetId, data) => {
   return updated.dailyLogs.find((l) => String(l._id) === String(logId));
 };
 
-// Danh sách nhật ký, mới nhất trước. Lọc theo date (đúng ngày) hoặc from/to (khoảng, gồm 2 đầu).
-const listLogs = async (recordId, { date, from, to }) => {
-  const record = await InpatientRecord.findById(recordId).select('dailyLogs').populate(LOG_POPULATE).lean();
-  if (!record) throw new ServiceError(404, 'Không tìm thấy hồ sơ nội trú');
-
-  const items = record.dailyLogs
+// Lọc theo date (đúng ngày) hoặc from/to (khoảng, gồm 2 đầu); sắp xếp mới nhất trước.
+// Dùng chung cho bác sĩ (listLogs) và chủ thú cưng (listLogsForOwner).
+const filterAndSortLogs = (logs, { date, from, to }) =>
+  logs
     .filter((l) => (date ? l.date === date : true))
     .filter((l) => (from ? l.date >= from : true))
     .filter((l) => (to ? l.date <= to : true))
     .sort((a, b) => (a.date === b.date ? new Date(b.createdAt) - new Date(a.createdAt) : a.date < b.date ? 1 : -1));
 
+const listLogs = async (recordId, filters) => {
+  const record = await InpatientRecord.findById(recordId).select('dailyLogs').populate(LOG_POPULATE).lean();
+  if (!record) throw new ServiceError(404, 'Không tìm thấy hồ sơ nội trú');
+
+  const items = filterAndSortLogs(record.dailyLogs, filters);
   return { items, total: items.length };
 };
 
-module.exports = { create, list, getById, createLog, listLogs, ServiceError };
+/**
+ * Chủ thú cưng xem nhật ký nội trú của thú cưng của mình, gộp qua mọi đợt nội trú, mới nhất trước.
+ * Thú cưng của người khác được coi như không tồn tại (404) để không lộ thông tin.
+ */
+const listLogsForOwner = async (ownerId, petId, { recordId, page, limit, ...filters }) => {
+  const pet = await Pet.findOne({ _id: petId, ownerId, status: 'Active' }).select('_id').lean();
+  if (!pet) throw new ServiceError(404, 'Không tìm thấy thú cưng');
+
+  const query = { petId };
+  if (recordId) query._id = recordId;
+
+  const records = await InpatientRecord.find(query)
+    .select('dailyLogs')
+    .populate({ path: 'dailyLogs.recordedById', select: 'fullName' }) // chủ chỉ thấy tên bác sĩ
+    .lean();
+
+  if (recordId && records.length === 0) throw new ServiceError(404, 'Không tìm thấy hồ sơ nội trú');
+
+  const all = filterAndSortLogs(
+    records.flatMap((r) => r.dailyLogs.map((l) => ({ ...l, inpatientRecordId: r._id }))),
+    filters
+  );
+
+  const total = all.length;
+  return {
+    items: all.slice((page - 1) * limit, page * limit),
+    total,
+    page,
+    limit,
+    totalPages: Math.ceil(total / limit),
+  };
+};
+
+module.exports = { create, list, getById, createLog, listLogs, listLogsForOwner, ServiceError };

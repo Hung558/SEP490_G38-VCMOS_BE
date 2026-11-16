@@ -83,4 +83,24 @@ const validateLogQuery = (query = {}) => {
   return { errors, value: { date, from, to } };
 };
 
-module.exports = { validateCreate, validateListQuery, validateCreateLog, validateLogQuery, isId };
+// Chủ thú cưng xem nhật ký: dùng lại kiểm tra date/from/to của validateLogQuery, thêm recordId và phân trang
+const validateOwnerLogQuery = (query = {}) => {
+  const base = validateLogQuery(query);
+  const errors = [...base.errors];
+  const { recordId } = query;
+  const page = Math.max(parseInt(query.page, 10) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(query.limit, 10) || 20, 1), 100);
+
+  if (recordId !== undefined && !isId(recordId)) errors.push('recordId không hợp lệ');
+
+  return { errors, value: { ...base.value, recordId, page, limit } };
+};
+
+module.exports = {
+  validateCreate,
+  validateListQuery,
+  validateCreateLog,
+  validateLogQuery,
+  validateOwnerLogQuery,
+  isId,
+};
