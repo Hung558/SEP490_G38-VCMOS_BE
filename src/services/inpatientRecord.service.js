@@ -311,4 +311,37 @@ const listLogsForOwner = async (ownerId, petId, { recordId, page, limit, ...filt
   };
 };
 
-module.exports = { create, list, getById, createLog, listLogs, listLogsForOwner, ServiceError };
+/**
+ * Xuất viện: chuyển hồ sơ Admitted → Discharged và ghi dischargedAt.
+ * Chỉ đổi trạng thái hồ sơ; thú cưng vẫn ở trong lồng cho tới khi chủ đến đón nên không đụng tới
+ * Cage / CageAssignment. Điều kiện status = Admitted làm thao tác này nguyên tử, hai request
+ * đồng thời không thể cùng xuất viện một hồ sơ.
+ */
+const discharge = async (recordId) => {
+  const record = await InpatientRecord.findOneAndUpdate(
+    { _id: recordId, status: 'Admitted' },
+    { status: 'Discharged', dischargedAt: new Date() },
+    { new: true }
+  )
+    .populate(POPULATE)
+    .lean();
+
+  if (!record) {
+    const exists = await InpatientRecord.exists({ _id: recordId });
+    if (!exists) throw new ServiceError(404, 'Không tìm thấy hồ sơ nội trú');
+    throw new ServiceError(409, 'Hồ sơ nội trú đã xuất viện');
+  }
+
+  return record;
+};
+
+module.exports = {
+  create,
+  list,
+  getById,
+  createLog,
+  listLogs,
+  listLogsForOwner,
+  discharge,
+  ServiceError,
+};

@@ -6,6 +6,7 @@ const controller = require('../controllers/inpatientRecord.controller');
 router.post('/', protect, authorize('Veterinarian'), controller.create);
 router.get('/', protect, authorize('Veterinarian'), controller.list);
 router.get('/:id', protect, authorize('Veterinarian'), controller.getById);
+router.patch('/:id/discharge', protect, authorize('Veterinarian'), controller.discharge);
 router.post('/:id/daily-logs', protect, authorize('Veterinarian'), controller.createLog);
 router.get('/:id/daily-logs', protect, authorize('Veterinarian'), controller.listLogs);
 

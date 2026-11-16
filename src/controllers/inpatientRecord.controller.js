@@ -87,4 +87,14 @@ const listMyPetLogs = async (req, res) => {
   }
 };
 
-module.exports = { create, list, getById, createLog, listLogs, listMyPetLogs };
+const discharge = async (req, res) => {
+  if (!isId(req.params.id)) return res.status(400).json({ message: 'id không hợp lệ' });
+
+  try {
+    return res.json(await service.discharge(req.params.id));
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
+module.exports = { create, list, getById, createLog, listLogs, listMyPetLogs, discharge };
