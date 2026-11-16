@@ -1,4 +1,6 @@
+const nodemailer = require('nodemailer');
 const InpatientRecord = require('../models/InpatientRecord');
+const User = require('../models/User');
 const Pet = require('../models/Pet');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Cage = require('../models/Cage');
@@ -10,6 +12,85 @@ class ServiceError extends Error {
     this.status = status;
   }
 }
+
+const escapeHtml = (str = '') =>
+  String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const formatVN = (date) =>
+  new Date(date).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
+
+// Gửi email thông báo nhập viện cho chủ thú cưng. Cùng cách cấu hình và giao diện với sendOtpEmail
+// trong user.service.js: nếu chưa cấu hình EMAIL_USER/EMAIL_PASS (dev/test) thì chỉ in ra console.
+const sendAdmissionEmail = async (owner, record) => {
+  const emailUser = process.env.EMAIL_USER;
+  const emailPass = process.env.EMAIL_PASS;
+  const petName = record.petId.name;
+  const subject = `[VCMOS] Thông báo nhập viện nội trú của ${petName}`;
+
+  if (!emailUser || !emailPass || process.env.NODE_ENV === 'test') {
+    if (process.env.NODE_ENV !== 'test') {
+      console.log(`[DEV EMAIL INPATIENT] Gửi tới ${owner.email} - ${subject}`);
+    }
+    return false;
+  }
+
+  const admittedAt = formatVN(record.admittedAt);
+  const vetName = record.attendingVetId?.fullName || '';
+  const cageLabel = record.cageId?.label || '';
+  const diagnosis = record.initialDiagnosis || '';
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: emailUser, pass: emailPass },
+  });
+
+  await transporter.sendMail({
+    from: `"VCMOS Veterinary Clinic" <${emailUser}>`,
+    to: owner.email,
+    subject,
+    text:
+      `Xin chào ${owner.fullName}, thú cưng ${petName} của bạn đã được nhập viện nội trú tại VCMOS ` +
+      `lúc ${admittedAt}. Bác sĩ phụ trách: ${vetName}. Lồng: ${cageLabel}.` +
+      (diagnosis ? ` Chẩn đoán ban đầu: ${diagnosis}.` : ''),
+    html: `
+      <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 32px 16px;">
+        <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
+          <div style="background-color: #0d9488; padding: 24px; text-align: center; color: #ffffff;">
+            <div style="font-size: 28px; margin-bottom: 4px;">🐾</div>
+            <h2 style="margin: 0; font-size: 20px; letter-spacing: 0.5px;">PHÒNG KHÁM THÚ Y VCMOS</h2>
+            <p style="margin: 4px 0 0; font-size: 13px; opacity: 0.9;">Hệ thống Quản lý & Chăm sóc Thú cưng</p>
+          </div>
+          <div style="padding: 28px 24px; color: #1e293b; line-height: 1.6;">
+            <p style="margin-top: 0;">Xin chào <strong>${escapeHtml(owner.fullName)}</strong>,</p>
+            <p>Thú cưng <strong>${escapeHtml(petName)}</strong> của bạn đã được <strong>nhập viện nội trú</strong> tại <strong>Phòng khám Thú y VCMOS</strong>. Thông tin chi tiết như sau:</p>
+            <div style="margin: 24px 0; padding: 18px; background-color: #f0fdfa; border: 2px dashed #0d9488; border-radius: 10px;">
+              <p style="margin: 0 0 6px;">🕒 <strong>Thời gian nhập viện:</strong> ${escapeHtml(admittedAt)}</p>
+              <p style="margin: 0 0 6px;">👨‍⚕️ <strong>Bác sĩ phụ trách:</strong> ${escapeHtml(vetName)}</p>
+              <p style="margin: 0${diagnosis ? ' 0 6px' : ''};">🏠 <strong>Lồng nội trú:</strong> ${escapeHtml(cageLabel)}</p>
+              ${diagnosis ? `<p style="margin: 0;">📋 <strong>Chẩn đoán ban đầu:</strong> ${escapeHtml(diagnosis)}</p>` : ''}
+            </div>
+            <p style="font-size: 13.5px; color: #64748b; margin-bottom: 0;">
+              Nếu cần thêm thông tin, vui lòng liên hệ trực tiếp với phòng khám.
+            </p>
+          </div>
+          <div style="background-color: #f8fafc; padding: 14px 24px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
+            Đây là email tự động, vui lòng không trả lời.<br/>
+            © VCMOS Veterinary Clinic Management System
+          </div>
+        </div>
+      </div>
+    `,
+  });
+
+  return true;
+};
+
+// Chỉ gửi tới chủ thú cưng có email ĐÃ XÁC THỰC (tránh gửi thông tin y tế tới địa chỉ chưa kiểm chứng)
+const notifyOwnerAdmitted = async (record) => {
+  const owner = await User.findById(record.petId.ownerId).select('fullName email isEmailVerified').lean();
+  if (!owner || !owner.email || !owner.isEmailVerified) return false;
+  return sendAdmissionEmail(owner, record);
+};
 
 const POPULATE = [
   { path: 'petId', select: 'code name species breed weight ownerId' },
@@ -95,7 +176,14 @@ const create = async (vetId, data) => {
     throw err;
   }
 
-  return InpatientRecord.findById(record._id).populate(POPULATE).lean();
+  const result = await InpatientRecord.findById(record._id).populate(POPULATE).lean();
+
+  // Gửi thông báo ở chế độ "bắn rồi quên": lỗi gửi mail không được làm hỏng việc nhập viện đã thành công
+  notifyOwnerAdmitted(result).catch((err) =>
+    console.error('Không gửi được email thông báo nhập viện:', err.message)
+  );
+
+  return result;
 };
 
 const list = async (vetId, { status, petId, attendingVetId, mine, page, limit }) => {
