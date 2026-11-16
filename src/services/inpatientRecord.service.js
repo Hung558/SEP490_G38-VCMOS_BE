@@ -20,13 +20,12 @@ const escapeHtml = (str = '') =>
 const formatVN = (date) =>
   new Date(date).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
 
-// Gửi email thông báo nhập viện cho chủ thú cưng. Cùng cách cấu hình và giao diện với sendOtpEmail
+// Gửi email thông báo cho chủ thú cưng. Cùng cách cấu hình và giao diện với sendOtpEmail
 // trong user.service.js: nếu chưa cấu hình EMAIL_USER/EMAIL_PASS (dev/test) thì chỉ in ra console.
-const sendAdmissionEmail = async (owner, record) => {
+// rows: [{ icon, label, value }] — dòng có value rỗng sẽ bị bỏ qua.
+const sendInpatientEmail = async (owner, { subject, text, intro, rows, outro }) => {
   const emailUser = process.env.EMAIL_USER;
   const emailPass = process.env.EMAIL_PASS;
-  const petName = record.petId.name;
-  const subject = `[VCMOS] Thông báo nhập viện nội trú của ${petName}`;
 
   if (!emailUser || !emailPass || process.env.NODE_ENV === 'test') {
     if (process.env.NODE_ENV !== 'test') {
@@ -35,10 +34,13 @@ const sendAdmissionEmail = async (owner, record) => {
     return false;
   }
 
-  const admittedAt = formatVN(record.admittedAt);
-  const vetName = record.attendingVetId?.fullName || '';
-  const cageLabel = record.cageId?.label || '';
-  const diagnosis = record.initialDiagnosis || '';
+  const visibleRows = rows.filter((r) => r.value);
+  const rowsHtml = visibleRows
+    .map(
+      (r, i) =>
+        `<p style="margin: 0${i < visibleRows.length - 1 ? ' 0 6px' : ''};">${r.icon} <strong>${r.label}:</strong> ${escapeHtml(r.value)}</p>`
+    )
+    .join('\n              ');
 
   const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -49,10 +51,7 @@ const sendAdmissionEmail = async (owner, record) => {
     from: `"VCMOS Veterinary Clinic" <${emailUser}>`,
     to: owner.email,
     subject,
-    text:
-      `Xin chào ${owner.fullName}, thú cưng ${petName} của bạn đã được nhập viện nội trú tại VCMOS ` +
-      `lúc ${admittedAt}. Bác sĩ phụ trách: ${vetName}. Lồng: ${cageLabel}.` +
-      (diagnosis ? ` Chẩn đoán ban đầu: ${diagnosis}.` : ''),
+    text,
     html: `
       <div style="font-family: Arial, sans-serif; background-color: #f4f7f6; padding: 32px 16px;">
         <div style="max-width: 520px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0;">
@@ -63,15 +62,12 @@ const sendAdmissionEmail = async (owner, record) => {
           </div>
           <div style="padding: 28px 24px; color: #1e293b; line-height: 1.6;">
             <p style="margin-top: 0;">Xin chào <strong>${escapeHtml(owner.fullName)}</strong>,</p>
-            <p>Thú cưng <strong>${escapeHtml(petName)}</strong> của bạn đã được <strong>nhập viện nội trú</strong> tại <strong>Phòng khám Thú y VCMOS</strong>. Thông tin chi tiết như sau:</p>
+            <p>${intro}</p>
             <div style="margin: 24px 0; padding: 18px; background-color: #f0fdfa; border: 2px dashed #0d9488; border-radius: 10px;">
-              <p style="margin: 0 0 6px;">🕒 <strong>Thời gian nhập viện:</strong> ${escapeHtml(admittedAt)}</p>
-              <p style="margin: 0 0 6px;">👨‍⚕️ <strong>Bác sĩ phụ trách:</strong> ${escapeHtml(vetName)}</p>
-              <p style="margin: 0${diagnosis ? ' 0 6px' : ''};">🏠 <strong>Lồng nội trú:</strong> ${escapeHtml(cageLabel)}</p>
-              ${diagnosis ? `<p style="margin: 0;">📋 <strong>Chẩn đoán ban đầu:</strong> ${escapeHtml(diagnosis)}</p>` : ''}
+              ${rowsHtml}
             </div>
             <p style="font-size: 13.5px; color: #64748b; margin-bottom: 0;">
-              Nếu cần thêm thông tin, vui lòng liên hệ trực tiếp với phòng khám.
+              ${outro}
             </p>
           </div>
           <div style="background-color: #f8fafc; padding: 14px 24px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
@@ -87,10 +83,62 @@ const sendAdmissionEmail = async (owner, record) => {
 };
 
 // Chỉ gửi tới chủ thú cưng có email ĐÃ XÁC THỰC (tránh gửi thông tin y tế tới địa chỉ chưa kiểm chứng)
-const notifyOwnerAdmitted = async (record) => {
+const findNotifiableOwner = async (record) => {
   const owner = await User.findById(record.petId.ownerId).select('fullName email isEmailVerified').lean();
-  if (!owner || !owner.email || !owner.isEmailVerified) return false;
-  return sendAdmissionEmail(owner, record);
+  return owner && owner.email && owner.isEmailVerified ? owner : null;
+};
+
+const notifyOwnerAdmitted = async (record) => {
+  const owner = await findNotifiableOwner(record);
+  if (!owner) return false;
+
+  const petName = record.petId.name;
+  const admittedAt = formatVN(record.admittedAt);
+  const vetName = record.attendingVetId?.fullName || '';
+  const cageLabel = record.cageId?.label || '';
+  const diagnosis = record.initialDiagnosis || '';
+
+  return sendInpatientEmail(owner, {
+    subject: `[VCMOS] Thông báo nhập viện nội trú của ${petName}`,
+    text:
+      `Xin chào ${owner.fullName}, thú cưng ${petName} của bạn đã được nhập viện nội trú tại VCMOS ` +
+      `lúc ${admittedAt}. Bác sĩ phụ trách: ${vetName}. Lồng: ${cageLabel}.` +
+      (diagnosis ? ` Chẩn đoán ban đầu: ${diagnosis}.` : ''),
+    intro: `Thú cưng <strong>${escapeHtml(petName)}</strong> của bạn đã được <strong>nhập viện nội trú</strong> tại <strong>Phòng khám Thú y VCMOS</strong>. Thông tin chi tiết như sau:`,
+    rows: [
+      { icon: '🕒', label: 'Thời gian nhập viện', value: admittedAt },
+      { icon: '👨‍⚕️', label: 'Bác sĩ phụ trách', value: vetName },
+      { icon: '🏠', label: 'Lồng nội trú', value: cageLabel },
+      { icon: '📋', label: 'Chẩn đoán ban đầu', value: diagnosis },
+    ],
+    outro: 'Nếu cần thêm thông tin, vui lòng liên hệ trực tiếp với phòng khám.',
+  });
+};
+
+// Xuất viện = đủ điều kiện về nhà; thú cưng vẫn ở trong lồng cho tới khi chủ đến đón
+const notifyOwnerDischarged = async (record) => {
+  const owner = await findNotifiableOwner(record);
+  if (!owner) return false;
+
+  const petName = record.petId.name;
+  const dischargedAt = formatVN(record.dischargedAt);
+  const vetName = record.attendingVetId?.fullName || '';
+  const cageLabel = record.cageId?.label || '';
+
+  return sendInpatientEmail(owner, {
+    subject: `[VCMOS] Thông báo xuất viện của ${petName}`,
+    text:
+      `Xin chào ${owner.fullName}, thú cưng ${petName} của bạn đã đủ điều kiện xuất viện tại VCMOS ` +
+      `lúc ${dischargedAt}. Bác sĩ phụ trách: ${vetName}. Bé đang ở lồng ${cageLabel}, ` +
+      'vui lòng đến phòng khám để đón bé.',
+    intro: `Thú cưng <strong>${escapeHtml(petName)}</strong> của bạn đã được <strong>xuất viện</strong> và đủ điều kiện về nhà. Vui lòng đến <strong>Phòng khám Thú y VCMOS</strong> để đón bé. Thông tin chi tiết như sau:`,
+    rows: [
+      { icon: '🕒', label: 'Thời gian xuất viện', value: dischargedAt },
+      { icon: '👨‍⚕️', label: 'Bác sĩ phụ trách', value: vetName },
+      { icon: '🏠', label: 'Bé đang ở lồng', value: cageLabel },
+    ],
+    outro: 'Nếu cần thêm thông tin hoặc hướng dẫn chăm sóc sau xuất viện, vui lòng liên hệ trực tiếp với phòng khám.',
+  });
 };
 
 const POPULATE = [
@@ -331,6 +379,11 @@ const discharge = async (recordId) => {
     if (!exists) throw new ServiceError(404, 'Không tìm thấy hồ sơ nội trú');
     throw new ServiceError(409, 'Hồ sơ nội trú đã xuất viện');
   }
+
+  // Gửi thông báo ở chế độ "bắn rồi quên": lỗi gửi mail không được làm hỏng việc xuất viện đã thành công
+  notifyOwnerDischarged(record).catch((err) =>
+    console.error('Không gửi được email thông báo xuất viện:', err.message)
+  );
 
   return record;
 };
