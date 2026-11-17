@@ -20,6 +20,8 @@
 9. [Bác Sĩ & Groomer Nhận Ca, Tra Cứu & Giải Phóng Chuồng (`Work Queue` — `/api/appointment-services/my-queue` & `/api/cage-assignments`)](#9--bác-sĩ--groomer-nhận-ca-tra-cứu--giải-phóng-chuồng-work-queue)
 10. [Bác Sĩ Khám Lâm Sàng, Ghi Bệnh Án Chuẩn SOAP & Kê Đơn Thuốc (`Medical Records` — `/api/medical-records`)](#10--bác-sĩ-khám-lâm-sàng-ghi-bệnh-án-chuẩn-soap--kê-đơn-thuốc-medical-records--apimedical-records)
 11. [Sub-task Cận Lâm Sàng & Dịch Vụ Phụ (`Sub-task Requests` — `/api/subtask-requests`)](#11--sub-task-cận-lâm-sàng--dịch-vụ-phụ-sub-task-requests--apisubtask-requests)
+12. [Lịch Báo Bận 3 Ca Theo Cơ Chế Blacklist (`Staff Schedules` — `/api/staff-schedules`)](#12--lịch-báo-bận-3-ca-theo-cơ-chế-blacklist-staff-schedules--apistaff-schedules)
+13. [Hóa Đơn Tổng Hợp & Thanh Toán Tiền Mặt / VNPay (`Invoices` — `/api/invoices`)](#13--hóa-đơn-tổng-hợp--thanh-toán-tiền-mặt--vnpay-invoices--apiinvoices)
 
 ---
 
@@ -978,6 +980,67 @@
 ### 12.3. Hủy lịch báo bận (`DELETE /api/staff-schedules/:id`)
 - **Auth**: 🔒 `Veterinarian`, `Groomer` (chỉ hủy của chính mình), `Receptionist`, `Admin`
 - **Kết quả mong đợi**: `200 OK` — Xóa khỏi blacklist để nhân sự xuất hiện lại trên danh sách điều phối ca đó.
+
+---
+
+## 13. 💳 Hóa Đơn Tổng Hợp & Thanh Toán Tiền Mặt / VNPay (`Invoices` — `/api/invoices`)
+
+### 13.1. Lễ tân lập hóa đơn tổng hợp (`POST /api/invoices` — `UC-45`, `SCR-20`)
+- **Auth**: 🔒 Cần Bearer Token (`Receptionist`)
+- **Body (`JSON`)**:
+  ```json
+  {
+    "orderId": "<ID_đơn_hẹn_ở_trạng_thái_WaitOwner>",
+    "inpatientRecordId": "<tùy_chọn_nếu_lập_cho_hồ_sơ_nội_trú_đã_Discharged>",
+    "prescriptionQuantities": [
+      { "productId": "<ID_thuốc_kê_đơn>", "quantity": 2 }
+    ],
+    "retailItems": [
+      { "productId": "<ID_sản_phẩm_bán_lẻ_đang_Active>", "quantity": 1 }
+    ]
+  }
+  ```
+- **Kết quả mong đợi**:
+  - `201 Created`: Tự động gom dịch vụ đã `Done`, đơn thuốc trong `MedicalRecord`, số ngày nằm viện nội trú (`InpatientDay`) và sản phẩm bán lẻ (`Active`), chụp lại tên & đơn giá (`BR-16`), tự sinh mã `INV-XXXXXX` (`BR-24`) với `paymentStatus: "Unpaid"`.
+  - `400 Bad Request`: Chọn sản phẩm đang `Inactive` (`BR-16` / `MSG27`).
+  - `409 Conflict`: Đơn chưa `WaitOwner`, còn đợt nội trú `Admitted`, hoặc đơn đã có hóa đơn.
+
+### 13.2. Thêm / bớt sản phẩm bán lẻ trước khi thanh toán (`PATCH /api/invoices/:id/items`)
+- **Auth**: 🔒 Cần Bearer Token (`Receptionist`)
+- **Body (`JSON`)**:
+  ```json
+  {
+    "addItems": [{ "productId": "<ID_sản_phẩm_Active>", "quantity": 2 }],
+    "removeItemIds": ["<ID_dòng_sản_phẩm_trong_items>"]
+  }
+  ```
+- **Kết quả mong đợi**: `200 OK` — Cập nhật lại danh sách sản phẩm và tự động cộng lại `totalAmount` khi hóa đơn còn `Unpaid` (chặn xóa các dòng `Service` / `InpatientDay`).
+
+### 13.3. Thanh toán Tiền mặt (`PATCH /api/invoices/:id/pay-cash` — `UC-46`)
+- **Auth**: 🔒 Cần Bearer Token (`Receptionist`)
+- **Body (`JSON`)**:
+  ```json
+  {
+    "cashReceived": 500000
+  }
+  ```
+- **Kết quả mong đợi**: `200 OK` — Chuyển hóa đơn sang `Paid` (`Cash`), tính tiền thừa `changeAmount`, đồng thời tự động chuyển đơn sang `Done`, khóa vĩnh viễn bệnh án `MedicalRecord` sang `Finalized` (`BR-14`) và giải phóng chuồng về `Available` (`UC-31`).
+
+### 13.4. Tạo link / QR thanh toán VNPay Sandbox (`POST /api/invoices/:id/vnpay-url` — `UC-47`, `API-02`)
+- **Auth**: 🔒 Cần Bearer Token (`Receptionist`)
+- **Kết quả mong đợi**: `200 OK` — Trả về `paymentUrl` (hiệu lực 15 phút), `vnpayTxnRef`, `expiresAt`.
+
+### 13.5. Callback từ VNPay (`GET /api/invoices/vnpay-ipn` & `GET /api/invoices/vnpay-return` — `BR-17`)
+- **Auth**: 🌐 Xác thực bằng chữ ký `HMAC-SHA512` (`vnp_SecureHash`)
+- **Nghiệp vụ**:
+  - `/vnpay-return`: Kiểm tra chữ ký và trả kết quả hiển thị, **không tự đổi trạng thái hóa đơn** (`API-04`).
+  - `/vnpay-ipn`: Xác thực chữ ký + mã giao dịch + số tiền -> chuyển hóa đơn sang `Paid` (`VNPay`), đơn sang `Done`, khóa `MedicalRecord` -> `Finalized`, giải phóng chuồng -> `Available`; trả mã `{ RspCode, Message }` chuẩn VNPay (`00`, `97`, `01`, `04`, `02`).
+
+### 13.6. Tra cứu hóa đơn & Tải biên lai PDF (`GET /api/invoices`, `/me`, `/:id`, `/:id/pdf` — `UC-48`)
+- `GET /api/invoices?paymentStatus=Paid&paymentMethod=Cash&from=2026-11-01&to=2026-11-30` (`Receptionist`, `Admin`)
+- `GET /api/invoices/me` (`PetOwner` — chỉ thấy hóa đơn của thú cưng mình)
+- `GET /api/invoices/:id` & `GET /api/invoices/:id/pdf` (`Receptionist`, `Admin`, hoặc đúng `PetOwner` sở hữu thú cưng theo `BR-23`; trả file PDF `application/pdf`).
+- `DELETE /api/invoices/:id`: Trả `403 Forbidden` theo quy định không xóa vật lý hóa đơn (**`BR-22`**).
 
 
 
