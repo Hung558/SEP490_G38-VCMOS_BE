@@ -11,6 +11,14 @@ router.get('/vnpay-return', controller.vnpayReturn);
 // Chủ nuôi xem lịch sử hóa đơn của thú cưng của mình (UC-48, SCR-15)
 router.get('/me', protect, authorize('PetOwner'), controller.listMyInvoices);
 
+// Báo cáo sản phẩm bán chạy theo ngày / tuần / tháng (đặt trước /:id)
+router.get(
+  '/reports/best-selling-products',
+  protect,
+  authorize('Admin'),
+  controller.getBestSellingProducts
+);
+
 // Lễ tân lập hóa đơn tổng hợp & quản lý danh sách hóa đơn (UC-45, SCR-20)
 router.post('/', protect, authorize('Receptionist'), controller.createInvoice);
 router.get('/', protect, authorize('Receptionist', 'Admin'), controller.listInvoices);
@@ -28,4 +36,3 @@ router.get('/:id', protect, authorize('Receptionist', 'Admin', 'PetOwner'), cont
 router.delete('/:id', protect, authorize('Receptionist', 'Admin'), controller.blockDeleteInvoice);
 
 module.exports = router;
-
