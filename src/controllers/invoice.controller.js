@@ -138,6 +138,55 @@ const vnpayReturn = async (req, res) => {
 };
 
 /**
+ * POST /api/invoices/:id/payos-url
+ * Lễ tân khởi tạo link thanh toán & chuỗi VietQR thật qua PayOS
+ */
+const createPayosUrl = async (req, res) => {
+  try {
+    const idCheck = validateObjectIdParam(req.params.id, 'ID hóa đơn');
+    if (!idCheck.isValid) {
+      return res.status(400).json({ message: idCheck.errors.id, errors: idCheck.errors });
+    }
+
+    const result = await invoiceService.createPayosPaymentUrlForInvoice(idCheck.value);
+    return res.status(200).json(result);
+  } catch (err) {
+    return handleControllerError(res, err);
+  }
+};
+
+/**
+ * POST /api/invoices/payos-webhook
+ * Webhook từ PayOS xác thực chữ ký HMAC-SHA256 -> chuyển hóa đơn Paid
+ */
+const payosWebhook = async (req, res) => {
+  try {
+    const result = await invoiceService.handlePayosWebhook(req.body);
+    return res.status(200).json(result);
+  } catch (err) {
+    return handleControllerError(res, err);
+  }
+};
+
+/**
+ * GET /api/invoices/:id/payos-status
+ * Chủ động kiểm tra và đồng bộ trạng thái thanh toán từ PayOS (hỗ trợ chạy localhost)
+ */
+const getPayosStatus = async (req, res) => {
+  try {
+    const idCheck = validateObjectIdParam(req.params.id, 'ID hóa đơn');
+    if (!idCheck.isValid) {
+      return res.status(400).json({ message: idCheck.errors.id, errors: idCheck.errors });
+    }
+
+    const result = await invoiceService.syncPayosInvoiceStatus(req.user, idCheck.value);
+    return res.status(200).json(result);
+  } catch (err) {
+    return handleControllerError(res, err);
+  }
+};
+
+/**
  * GET /api/invoices
  * Lễ tân / Admin xem danh sách tất cả hóa đơn (SCR-20)
  */
@@ -254,6 +303,9 @@ module.exports = {
   createVnpayUrl,
   vnpayIpn,
   vnpayReturn,
+  createPayosUrl,
+  payosWebhook,
+  getPayosStatus,
   listInvoices,
   listMyInvoices,
   getInvoiceById,

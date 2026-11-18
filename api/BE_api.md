@@ -1030,7 +1030,12 @@
 - **Auth**: 🔒 Cần Bearer Token (`Receptionist`)
 - **Kết quả mong đợi**: `200 OK` — Trả về `paymentUrl` (hiệu lực 15 phút), `vnpayTxnRef`, `expiresAt`.
 
-### 13.5. Callback từ VNPay (`GET /api/invoices/vnpay-ipn` & `GET /api/invoices/vnpay-return` — `BR-17`)
+### 13.5. Thanh toán PayOS VietQR thật (`POST /api/invoices/:id/payos-url` & `GET /api/invoices/:id/payos-status`)
+- `POST /api/invoices/:id/payos-url` (`Receptionist`): Gọi PayOS API v2 tạo `qrCode` chuẩn VietQR (quét được bằng app ngân hàng thật) + `checkoutUrl`.
+- `GET /api/invoices/:id/payos-status` (và tự động kiểm tra trong `GET /api/invoices/:id`): Chủ động hỏi PayOS xem khách đã chuyển khoản xong chưa; nếu `PAID` tự động chốt `Paid` (`PayOS`), đơn `Done`, khóa `MedicalRecord` -> `Finalized`, nhả chuồng -> `Available` ngay cả trên `localhost`.
+- `POST /api/invoices/payos-webhook`: Webhook cho PayOS (xác thực `HMAC-SHA256`).
+
+### 13.6. Callback từ VNPay (`GET /api/invoices/vnpay-ipn` & `GET /api/invoices/vnpay-return` — `BR-17`)
 - **Auth**: 🌐 Xác thực bằng chữ ký `HMAC-SHA512` (`vnp_SecureHash`)
 - **Nghiệp vụ**:
   - `/vnpay-return`: Kiểm tra chữ ký và trả kết quả hiển thị, **không tự đổi trạng thái hóa đơn** (`API-04`).

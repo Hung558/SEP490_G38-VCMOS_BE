@@ -4,7 +4,11 @@ process.env.VNP_TMN_CODE = process.env.VNP_TMN_CODE || 'TESTTMN1';
 process.env.VNP_HASH_SECRET = process.env.VNP_HASH_SECRET || 'TEST_HASH_SECRET_KEY_1234567890';
 process.env.VNP_URL = process.env.VNP_URL || 'https://sandbox.vnpayment.vn/paymentv2/vpcpay.html';
 process.env.VNP_RETURN_URL = process.env.VNP_RETURN_URL || 'http://localhost:9999/api/invoices/vnpay-return';
+process.env.PAYOS_CLIENT_ID = process.env.PAYOS_CLIENT_ID || 'test-payos-client-id';
+process.env.PAYOS_API_KEY = process.env.PAYOS_API_KEY || 'test-payos-api-key';
+process.env.PAYOS_CHECKSUM_KEY = process.env.PAYOS_CHECKSUM_KEY || 'test-payos-checksum-key';
 
+const crypto = require('crypto');
 const request = require('supertest');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
@@ -576,5 +580,142 @@ describe('Module Hóa đơn & Thanh toán (Invoice / VNPay / PDF)', () => {
       .delete(`/api/invoices/${invoiceCash._id}`)
       .set('Authorization', `Bearer ${adminToken}`);
     expect(delRes.status).toBe(403);
+  });
+
+  test('9. Thanh toán PayOS VietQR (tạo QR, kiểm tra Webhook signature và chủ động đồng bộ trạng thái PAID)', async () => {
+    const payosOrder = await AppointmentOrder.create({
+      code: 'APT-INVP01',
+      petId: pet1._id,
+      ownerId: owner1._id,
+      date: '2026-11-18',
+      derivedStatus: 'WaitOwner',
+      checkedInAt: new Date(),
+    });
+    const payosApptSvc = await AppointmentService.create({
+      orderId: payosOrder._id,
+      serviceId: examService._id,
+      sequenceNo: 1,
+      assignedStaffId: vet._id,
+      status: 'Done',
+    });
+    const payosMr = await MedicalRecord.create({
+      appointmentServiceId: payosApptSvc._id,
+      petId: pet1._id,
+      subjectiveNote: 'Kiểm tra sức khỏe',
+      objectiveNote: '38.6 độ',
+      assessment: 'Bình thường',
+      plan: 'Chăm sóc tại nhà',
+      status: 'Draft',
+    });
+
+    const createInvRes = await request(app)
+      .post('/api/invoices')
+      .set('Authorization', `Bearer ${receptionistToken}`)
+      .send({ orderId: String(payosOrder._id) });
+    expect(createInvRes.status).toBe(201);
+    const payosInvoice = createInvRes.body.data;
+
+    let payosServerStatus = 'PENDING';
+    const fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url, opts = {}) => {
+      if (opts.method === 'POST') {
+        const body = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            code: '00',
+            desc: 'success',
+            data: {
+              bin: '970422',
+              accountNumber: '0123456789',
+              accountName: 'HA DUY HUNG',
+              amount: body.amount,
+              description: body.description,
+              orderCode: body.orderCode,
+              paymentLinkId: 'payos-link-001',
+              status: 'PENDING',
+              checkoutUrl: `https://pay.payos.vn/web/payos-link-001`,
+              qrCode: '00020101021238570010A000000727012700069704220113CAS0123456789530370454061500005802VN62130809INVPAYOS16304ABCD',
+            },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          code: '00',
+          desc: 'success',
+          data: {
+            id: 'payos-link-001',
+            orderCode: Number(String(url).split('/').pop()),
+            amount: payosInvoice.totalAmount,
+            amountPaid: payosServerStatus === 'PAID' ? payosInvoice.totalAmount : 0,
+            status: payosServerStatus,
+          },
+        }),
+      };
+    });
+
+    try {
+      const linkRes = await request(app)
+        .post(`/api/invoices/${payosInvoice._id}/payos-url`)
+        .set('Authorization', `Bearer ${receptionistToken}`);
+      expect(linkRes.status).toBe(200);
+      expect(linkRes.body.data.qrCode).toContain('00020101');
+      expect(linkRes.body.data.checkoutUrl).toContain('pay.payos.vn');
+      const generatedOrderCode = linkRes.body.data.orderCode;
+
+      // Webhook sai chữ ký -> 400
+      const badWebhookRes = await request(app)
+        .post('/api/invoices/payos-webhook')
+        .send({
+          code: '00',
+          desc: 'success',
+          success: true,
+          data: { orderCode: generatedOrderCode, amount: payosInvoice.totalAmount },
+          signature: 'invalid-signature',
+        });
+      expect(badWebhookRes.status).toBe(400);
+
+      // Polling khi khách chưa chuyển khoản -> vẫn Unpaid
+      const pendingStatusRes = await request(app)
+        .get(`/api/invoices/${payosInvoice._id}/payos-status`)
+        .set('Authorization', `Bearer ${receptionistToken}`);
+      expect(pendingStatusRes.status).toBe(200);
+      expect(pendingStatusRes.body.payosStatus).toBe('PENDING');
+      expect(pendingStatusRes.body.data.paymentStatus).toBe('Unpaid');
+
+      // Giả lập khách đã quét VietQR chuyển khoản thành công trên PayOS
+      payosServerStatus = 'PAID';
+      const paidStatusRes = await request(app)
+        .get(`/api/invoices/${payosInvoice._id}/payos-status`)
+        .set('Authorization', `Bearer ${receptionistToken}`);
+      expect(paidStatusRes.status).toBe(200);
+      expect(paidStatusRes.body.payosStatus).toBe('PAID');
+      expect(paidStatusRes.body.data.paymentStatus).toBe('Paid');
+      expect(paidStatusRes.body.data.paymentMethod).toBe('PayOS');
+
+      const [donePayosOrder, finalizedPayosMr] = await Promise.all([
+        AppointmentOrder.findById(payosOrder._id).lean(),
+        MedicalRecord.findById(payosMr._id).lean(),
+      ]);
+      expect(donePayosOrder.derivedStatus).toBe('Done');
+      expect(finalizedPayosMr.status).toBe('Finalized');
+
+      // Kiểm tra Webhook chữ ký hợp lệ cũng trả 200 idempotent
+      const webhookData = { amount: payosInvoice.totalAmount, code: '00', orderCode: generatedOrderCode };
+      const webhookSig = crypto
+        .createHmac('sha256', process.env.PAYOS_CHECKSUM_KEY)
+        .update(`amount=${webhookData.amount}&code=${webhookData.code}&orderCode=${webhookData.orderCode}`)
+        .digest('hex');
+      const okWebhookRes = await request(app)
+        .post('/api/invoices/payos-webhook')
+        .send({ code: '00', desc: 'success', success: true, data: webhookData, signature: webhookSig });
+      expect(okWebhookRes.status).toBe(200);
+      expect(okWebhookRes.body.error).toBe(0);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

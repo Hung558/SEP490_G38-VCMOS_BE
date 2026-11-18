@@ -4,9 +4,10 @@ const controller = require('../controllers/invoice.controller');
 
 const router = express.Router();
 
-// Callback từ cổng thanh toán VNPay (xác thực bằng chữ ký HMAC-SHA512 theo BR-17, đặt trước /:id)
+// Callback từ cổng thanh toán VNPay / PayOS (xác thực bằng chữ ký HMAC, đặt trước /:id)
 router.get('/vnpay-ipn', controller.vnpayIpn);
 router.get('/vnpay-return', controller.vnpayReturn);
+router.post('/payos-webhook', controller.payosWebhook);
 
 // Chủ nuôi xem lịch sử hóa đơn của thú cưng của mình (UC-48, SCR-15)
 router.get('/me', protect, authorize('PetOwner'), controller.listMyInvoices);
@@ -27,6 +28,8 @@ router.get('/', protect, authorize('Receptionist', 'Admin'), controller.listInvo
 router.patch('/:id/items', protect, authorize('Receptionist'), controller.updateInvoiceRetailItems);
 router.patch('/:id/pay-cash', protect, authorize('Receptionist'), controller.payCash);
 router.post('/:id/vnpay-url', protect, authorize('Receptionist'), controller.createVnpayUrl);
+router.post('/:id/payos-url', protect, authorize('Receptionist'), controller.createPayosUrl);
+router.get('/:id/payos-status', protect, authorize('Receptionist', 'Admin', 'PetOwner'), controller.getPayosStatus);
 
 // Xem chi tiết & Xuất biên lai PDF (BR-23: kiểm tra quyền sở hữu đối với PetOwner)
 router.get('/:id/pdf', protect, authorize('Receptionist', 'Admin', 'PetOwner'), controller.getInvoicePdf);

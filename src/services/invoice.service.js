@@ -13,6 +13,12 @@ const Cage = require('../models/Cage');
 const CageAssignment = require('../models/CageAssignment');
 const { runWithTransaction } = require('../utils/transaction');
 const { buildVnpayPaymentUrl, verifyVnpaySignature } = require('../utils/vnpay');
+const {
+  hasPayosConfig,
+  createPayosPaymentLink,
+  getPayosPaymentInfo,
+  verifyPayosWebhookSignature,
+} = require('../utils/payos');
 
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 6;
@@ -556,6 +562,36 @@ const finalizeAfterPayment = async (invoice, paidAt, session = null) => {
 };
 
 /**
+ * Chuyển trạng thái hóa đơn Unpaid -> Paid (theo paymentMethod) và đồng bộ đóng đơn / khóa SOAP / nhả chuồng trong Transaction
+ */
+const markInvoicePaidAndFinalize = async (invoiceId, paymentMethod, paidAt = new Date()) => {
+  return runWithTransaction(async (session) => {
+    const updateOpts = session ? { returnDocument: 'after', session } : { returnDocument: 'after' };
+    const paidDoc = await Invoice.findOneAndUpdate(
+      { _id: invoiceId, paymentStatus: 'Unpaid' },
+      { $set: { paymentMethod, paymentStatus: 'Paid', paidAt } },
+      updateOpts
+    ).lean();
+
+    if (!paidDoc) return null;
+
+    try {
+      await finalizeAfterPayment(paidDoc, paidAt, session);
+    } catch (err) {
+      if (!session) {
+        await Invoice.updateOne(
+          { _id: invoiceId },
+          { $set: { paymentMethod: null, paymentStatus: 'Unpaid', paidAt: null } }
+        );
+      }
+      throw err;
+    }
+
+    return paidDoc;
+  });
+};
+
+/**
  * 3. Thanh toán Tiền mặt (PATCH /api/invoices/:id/pay-cash — UC-46)
  */
 const payInvoiceByCash = async (invoiceId, { cashReceived } = {}) => {
@@ -574,32 +610,10 @@ const payInvoiceByCash = async (invoiceId, { cashReceived } = {}) => {
   }
 
   const paidAt = new Date();
-  const updatedInvoice = await runWithTransaction(async (session) => {
-    const updateOpts = session ? { returnDocument: 'after', session } : { returnDocument: 'after' };
-    const paidDoc = await Invoice.findOneAndUpdate(
-      { _id: invoiceId, paymentStatus: 'Unpaid' },
-      { $set: { paymentMethod: 'Cash', paymentStatus: 'Paid', paidAt } },
-      updateOpts
-    ).lean();
-
-    if (!paidDoc) {
-      throw httpError(409, 'Hóa đơn này đã được thanh toán trước đó');
-    }
-
-    try {
-      await finalizeAfterPayment(paidDoc, paidAt, session);
-    } catch (err) {
-      if (!session) {
-        await Invoice.updateOne(
-          { _id: invoiceId },
-          { $set: { paymentMethod: null, paymentStatus: 'Unpaid', paidAt: null } }
-        );
-      }
-      throw err;
-    }
-
-    return paidDoc;
-  });
+  const updatedInvoice = await markInvoicePaidAndFinalize(invoiceId, 'Cash', paidAt);
+  if (!updatedInvoice) {
+    throw httpError(409, 'Hóa đơn này đã được thanh toán trước đó');
+  }
 
   const populated = await Invoice.findById(updatedInvoice._id).populate(INVOICE_POPULATE).lean();
   const changeAmount =
@@ -683,31 +697,141 @@ const handleVnpayIpn = async (query = {}) => {
     return { RspCode: '00', Message: 'Confirm Success' };
   }
 
-  const paidAt = new Date();
-  await runWithTransaction(async (session) => {
-    const updateOpts = session ? { returnDocument: 'after', session } : { returnDocument: 'after' };
-    const paidDoc = await Invoice.findOneAndUpdate(
-      { _id: invoice._id, paymentStatus: 'Unpaid' },
-      { $set: { paymentMethod: 'VNPay', paymentStatus: 'Paid', paidAt } },
-      updateOpts
-    ).lean();
+  await markInvoicePaidAndFinalize(invoice._id, 'VNPay', new Date());
+  return { RspCode: '00', Message: 'Confirm Success' };
+};
 
-    if (!paidDoc) return;
+/**
+ * 6. Tạo link & mã VietQR thanh toán PayOS thật (POST /api/invoices/:id/payos-url)
+ */
+const createPayosPaymentUrlForInvoice = async (invoiceId) => {
+  const invoice = await Invoice.findById(invoiceId).lean();
+  if (!invoice) {
+    throw httpError(404, 'Không tìm thấy hóa đơn');
+  }
+  if (invoice.paymentStatus !== 'Unpaid') {
+    throw httpError(409, `Hóa đơn đang ở trạng thái "${invoice.paymentStatus}", không thể tạo mã thanh toán`);
+  }
+  if (!invoice.totalAmount || invoice.totalAmount < 1) {
+    throw httpError(400, 'Tổng tiền hóa đơn bằng 0đ, vui lòng xác nhận thanh toán tiền mặt thay cho PayOS');
+  }
 
-    try {
-      await finalizeAfterPayment(paidDoc, paidAt, session);
-    } catch (err) {
-      if (!session) {
-        await Invoice.updateOne(
-          { _id: invoice._id },
-          { $set: { paymentMethod: null, paymentStatus: 'Unpaid', paidAt: null } }
-        );
-      }
-      throw err;
-    }
+  const orderCode = Number(`${Math.floor(Date.now() / 1000)}${crypto.randomInt(100, 999)}`);
+  const description = invoice.code.replace(/[^A-Z0-9]/gi, '').slice(0, 25);
+
+  const payosData = await createPayosPaymentLink({
+    orderCode,
+    amount: invoice.totalAmount,
+    description,
   });
 
-  return { RspCode: '00', Message: 'Confirm Success' };
+  await Invoice.updateOne(
+    { _id: invoice._id, paymentStatus: 'Unpaid' },
+    {
+      $set: {
+        payosOrderCode: orderCode,
+        payosPaymentLinkId: payosData.paymentLinkId || null,
+      },
+    }
+  );
+
+  return {
+    message: 'Tạo liên kết thanh toán PayOS thành công',
+    data: {
+      invoiceId: invoice._id,
+      invoiceCode: invoice.code,
+      orderCode,
+      paymentLinkId: payosData.paymentLinkId || null,
+      amount: invoice.totalAmount,
+      checkoutUrl: payosData.checkoutUrl,
+      paymentUrl: payosData.checkoutUrl,
+      qrCode: payosData.qrCode,
+      accountName: payosData.accountName || null,
+      accountNumber: payosData.accountNumber || null,
+      bin: payosData.bin || null,
+      expiresAt: payosData.expiresAt,
+    },
+  };
+};
+
+/**
+ * 6b. Webhook từ PayOS báo thanh toán thành công (POST /api/invoices/payos-webhook)
+ */
+const handlePayosWebhook = async (webhookBody = {}) => {
+  if (!verifyPayosWebhookSignature(webhookBody)) {
+    throw httpError(400, 'Chữ ký Webhook PayOS không hợp lệ');
+  }
+
+  const data = webhookBody.data || {};
+  const orderCode = Number(data.orderCode);
+  if (!Number.isFinite(orderCode)) {
+    return { error: 0, message: 'Ok', data: null };
+  }
+
+  const invoice = await Invoice.findOne({ payosOrderCode: orderCode }).lean();
+  if (!invoice) {
+    // PayOS gửi request ping thử nghiệm (orderCode = 123) khi lưu Webhook URL trên dashboard
+    return { error: 0, message: 'Ok', data: null };
+  }
+
+  if (Number(data.amount) < Math.round(invoice.totalAmount)) {
+    throw httpError(400, 'Số tiền thanh toán PayOS không khớp với tổng tiền hóa đơn');
+  }
+
+  if (invoice.paymentStatus === 'Paid') {
+    return { error: 0, message: 'Ok', data: null };
+  }
+
+  const isSuccess = webhookBody.success !== false && (!data.code || data.code === '00');
+  if (isSuccess) {
+    await markInvoicePaidAndFinalize(invoice._id, 'PayOS', new Date());
+  }
+
+  return { error: 0, message: 'Ok', data: null };
+};
+
+/**
+ * 6c. Chủ động đồng bộ trạng thái thanh toán từ PayOS (GET /api/invoices/:id/payos-status)
+ * Giúp luồng quét VietQR chốt Paid ngay cả khi chạy BE ở localhost không có ngrok webhook.
+ */
+const syncPayosInvoiceStatus = async (currentUser, invoiceId) => {
+  const invoice = await Invoice.findById(invoiceId).populate(INVOICE_POPULATE).lean();
+  if (!invoice) {
+    throw httpError(404, 'Không tìm thấy hóa đơn');
+  }
+
+  await assertCanAccessInvoice(currentUser, invoice);
+
+  if (invoice.paymentStatus === 'Paid') {
+    return {
+      message: 'Hóa đơn đã được thanh toán',
+      data: invoice,
+      payosStatus: 'PAID',
+    };
+  }
+
+  if (!invoice.payosOrderCode) {
+    throw httpError(400, 'Hóa đơn này chưa khởi tạo giao dịch thanh toán PayOS');
+  }
+
+  const payosInfo = await getPayosPaymentInfo(invoice.payosOrderCode);
+  const paidAmount = Number(payosInfo?.amountPaid ?? payosInfo?.amount ?? 0);
+
+  if (payosInfo?.status === 'PAID' && paidAmount >= Math.round(invoice.totalAmount)) {
+    await markInvoicePaidAndFinalize(invoice._id, 'PayOS', new Date());
+    const refreshed = await Invoice.findById(invoice._id).populate(INVOICE_POPULATE).lean();
+    return {
+      message: 'Thanh toán PayOS thành công',
+      data: refreshed,
+      payosStatus: 'PAID',
+    };
+  }
+
+  return {
+    message: 'Giao dịch PayOS chưa hoàn tất thanh toán',
+    data: invoice,
+    payosStatus: payosInfo?.status || 'PENDING',
+  };
 };
 
 /**
@@ -867,6 +991,22 @@ const getInvoiceById = async (currentUser, invoiceId) => {
   }
 
   await assertCanAccessInvoice(currentUser, invoice);
+
+  // Tự động kiểm tra PayOS khi FE poll GET /api/invoices/:id ở môi trường local (không có webhook)
+  if (invoice.paymentStatus === 'Unpaid' && invoice.payosOrderCode && hasPayosConfig()) {
+    try {
+      const payosInfo = await getPayosPaymentInfo(invoice.payosOrderCode);
+      const paidAmount = Number(payosInfo?.amountPaid ?? payosInfo?.amount ?? 0);
+      if (payosInfo?.status === 'PAID' && paidAmount >= Math.round(invoice.totalAmount)) {
+        await markInvoicePaidAndFinalize(invoice._id, 'PayOS', new Date());
+        const refreshed = await Invoice.findById(invoice._id).populate(INVOICE_POPULATE).lean();
+        return { data: refreshed || invoice };
+      }
+    } catch {
+      // Bỏ qua lỗi mạng tạm thời tới PayOS để không làm gián đoạn việc xem chi tiết hóa đơn
+    }
+  }
+
   return { data: invoice };
 };
 
@@ -885,6 +1025,7 @@ const PAYMENT_STATUS_LABELS = {
 const PAYMENT_METHOD_LABELS = {
   Cash: 'Tiền mặt',
   VNPay: 'VNPay QR',
+  PayOS: 'PayOS (VietQR)',
 };
 
 /**
@@ -1086,6 +1227,9 @@ module.exports = {
   createVnpayPaymentUrlForInvoice,
   handleVnpayIpn,
   handleVnpayReturn,
+  createPayosPaymentUrlForInvoice,
+  handlePayosWebhook,
+  syncPayosInvoiceStatus,
   listInvoices,
   listMyInvoices,
   getInvoiceById,

@@ -1,7 +1,7 @@
 const { isValidObjectId } = require('mongoose');
 
 const PAYMENT_STATUSES = ['Unpaid', 'Paid', 'Refunded'];
-const PAYMENT_METHODS = ['Cash', 'VNPay'];
+const PAYMENT_METHODS = ['Cash', 'VNPay', 'PayOS'];
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const VN_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
