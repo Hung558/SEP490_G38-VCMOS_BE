@@ -28,7 +28,6 @@ Create an online appointment together with one or more services in a single requ
 | `serviceId` | string | Yes | Id of the service. The service must exist and have status `Active`. |
 | `sequenceNo` | integer | No | Order of the service within the appointment (positive integer, unique within the request). If omitted, it is assigned automatically as the highest number so far + 1, starting at `1`. |
 | `isEmergency` | boolean | No | Mark the service as an emergency. Defaults to `false`. |
-| `preferredStaffId` | string \| null | No | Id of the veterinarian or groomer the owner would like to be served by. The staff member must exist, be `Active`, and have the role the service requires (`Groomer` for grooming services, `Veterinarian` otherwise). The staff member must also not be marked busy in the staff schedule: for the shift of that service if the request includes `slotStart`, otherwise not busy for the whole day. `null` or omitted means no preference. This is a preference only: the receptionist still makes the official assignment (`assignedStaffId`). |
 
 ### Fields that must not be sent
 
@@ -37,7 +36,7 @@ The server sets these itself. Sending any of them returns `400`.
 | Level | Fields |
 |---|---|
 | Request body | `code`, `isOnline`, `derivedStatus`, `checkedInAt` |
-| Each `services[]` item | `orderId`, `assignedStaffId`, `status`, `queueNo`, `enqueueAt`, `dequeueAt`, `groomingNote` |
+| Each `services[]` item | `orderId`, `preferredStaffId`, `assignedStaffId`, `status`, `queueNo`, `enqueueAt`, `dequeueAt`, `groomingNote` |
 
 > The owner is always taken from the token. Any `ownerId` in the body is ignored.
 
@@ -55,8 +54,7 @@ The server sets these itself. Sending any of them returns `400`.
     {
       "serviceId": "6ad96d4a9664da6b2c0d8e02",
       "sequenceNo": 2,
-      "isEmergency": false,
-      "preferredStaffId": "6ad96d4a9664da6b2c0d8c05"
+      "isEmergency": false
     }
   ]
 }
@@ -107,7 +105,7 @@ The server sets these itself. Sending any of them returns `400`.
         "orderId": "6ad96d4a9664da6b2c0d8f10",
         "serviceId": "6ad96d4a9664da6b2c0d8e02",
         "sequenceNo": 2,
-        "preferredStaffId": "6ad96d4a9664da6b2c0d8c05",
+        "preferredStaffId": null,
         "assignedStaffId": null,
         "status": "Booked",
         "isEmergency": false,
@@ -152,10 +150,6 @@ Possible messages:
 | `services[i]: sequenceNo phải là số nguyên dương` | `sequenceNo` is not a positive integer. |
 | `services[i]: isEmergency phải là true hoặc false` | `isEmergency` is not a boolean. |
 | `services[i]: Dịch vụ hiện không hoạt động` | The service exists but its status is not `Active`. |
-| `services[i]: preferredStaffId không hợp lệ` | `preferredStaffId` is not `null` and not a valid ObjectId string. |
-| `services[i]: Nhân viên được chọn phải có vai trò Veterinarian hoặc Groomer` | The chosen user is not a veterinarian or groomer. |
-| `services[i]: Nhân viên được chọn hiện không ở trạng thái hoạt động` | The chosen staff member is not `Active`. |
-| `services[i]: Dịch vụ "<name>" (<category>) chỉ có thể chọn nhân viên có vai trò <role>` | The staff member's role does not match the role the service requires. |
 
 ### 401 Unauthorized: not logged in
 
@@ -195,7 +189,6 @@ Returned when the logged-in user is not a `PetOwner`.
 |---|---|
 | `Không tìm thấy thú cưng` | The pet does not exist or does not belong to the logged-in user. |
 | `services[i]: Không tìm thấy dịch vụ` | The service does not exist. |
-| `services[i]: Không tìm thấy nhân viên được chọn` | The user in `preferredStaffId` does not exist. |
 
 ### 409 Conflict
 
@@ -209,8 +202,6 @@ Returned when the logged-in user is not a `PetOwner`.
 |---|---|
 | `Thú cưng này đã có lịch hẹn trong ngày đã chọn` | The pet already has a non-cancelled appointment on that date. |
 | `services[i]: Số thứ tự dịch vụ bị trùng trong lịch hẹn này` | Two services in the request end up with the same `sequenceNo` (including numbers assigned automatically). |
-| `services[i]: Nhân viên "<name>" đã báo bận vào ca <shift> ngày <date>` | The request includes `slotStart` and the chosen staff member is marked busy for the shift of that service. |
-| `services[i]: Nhân viên "<name>" đã báo bận cả ngày <date>` | The request has no `slotStart` and the chosen staff member is marked busy for all three shifts that day. |
 
 ### 500 Internal Server Error
 
@@ -226,5 +217,4 @@ If a unique appointment code cannot be generated after several attempts, the mes
 
 - **All or nothing:** if creating any service fails, the appointment and the services already created are deleted, so no partial booking is left behind. This is done by manual cleanup, not a database transaction.
 - **Email notification:** the receptionist email is sent as soon as the appointment is created, before the services. In the rare case where a service fails afterwards and the booking is rolled back, receptionists will already have been notified.
-- **Preferred staff:** `preferredStaffId` is stored on the service as a preference and does not assign the staff member or put the service in their queue. Receptionists see it (populated with `code`, `fullName`, `role`, `status`) in `GET /api/appointment-services?orderId=...` and decide the final assignment at check-in. Availability comes from the staff schedule (busy records per date and shift). When `slotStart` is not sent the shift is unknown, so only a staff member busy for the whole day is rejected; the receptionist's assignment check still applies later.
 - **Past dates:** dates in the past are not rejected by the server.

@@ -36,9 +36,8 @@ const createError = (message, statusCode = 400) => {
 /**
  * Tạo mới dịch vụ cho lịch hẹn online.
  *
- * `assignedStaffId`, `status`, `queueNo`, `enqueueAt`, `dequeueAt` và `groomingNote`
- * không nhận từ đầu vào, dùng giá trị mặc định của schema.
- * `preferredStaffId` là tùy chọn (chỉ được truyền từ `createOnlineBooking`, đã kiểm tra ở validator).
+ * `preferredStaffId`, `assignedStaffId`, `status`, `queueNo`, `enqueueAt`,
+ * `dequeueAt` và `groomingNote` không nhận từ đầu vào, dùng giá trị mặc định của schema.
  *
  * @param {Object} payload
  * @param {string} payload.ownerId - Id của người dùng đang đăng nhập (PetOwner); phải là chủ của lịch hẹn
@@ -46,7 +45,6 @@ const createError = (message, statusCode = 400) => {
  * @param {string} payload.serviceId
  * @param {number} [payload.sequenceNo] - Tự tăng nếu không truyền
  * @param {boolean} [payload.isEmergency]
- * @param {string} [payload.preferredStaffId] - Nhân sự chủ nuôi muốn được phục vụ
  * @returns {Promise<{ message: string, data: AppointmentService }>}
  * @throws {Error} 403 nếu lịch hẹn không thuộc về `ownerId`
  */
@@ -56,7 +54,6 @@ async function createOnlineAppointmentService({
   serviceId,
   sequenceNo,
   isEmergency,
-  preferredStaffId,
   scheduledStart,
   scheduledEnd,
 }) {
@@ -77,7 +74,6 @@ async function createOnlineAppointmentService({
 
   const doc = { orderId, serviceId, sequenceNo: seq };
   if (typeof isEmergency === 'boolean') doc.isEmergency = isEmergency;
-  if (preferredStaffId) doc.preferredStaffId = preferredStaffId;
   if (typeof scheduledStart === 'string') doc.scheduledStart = scheduledStart;
   if (typeof scheduledEnd === 'string') doc.scheduledEnd = scheduledEnd;
 
@@ -104,7 +100,7 @@ async function createOnlineAppointmentService({
  * @param {string} payload.date - YYYY-MM-DD
  * @param {string} [payload.note]
  * @param {string} [payload.slotStart] - HH:mm (tùy chọn; nếu có, BE tự tính scheduledStart/scheduledEnd và slotEnd)
- * @param {Array<{ serviceId: string, sequenceNo?: number, isEmergency?: boolean, preferredStaffId?: string }>} payload.services
+ * @param {Array<{ serviceId: string, sequenceNo?: number, isEmergency?: boolean }>} payload.services
  * @returns {Promise<{ message: string, data: { appointment: AppointmentOrder, services: AppointmentService[] } }>}
  * @throws {Error} 400 nếu không có dịch vụ nào; lỗi từ createOnlineAppointment / createOnlineAppointmentService
  */
@@ -175,14 +171,13 @@ async function createOnlineBooking({ ownerId, petId, date, note, slotStart, serv
   const createdServices = [];
   try {
     for (let i = 0; i < services.length; i++) {
-      const { serviceId, sequenceNo, isEmergency, preferredStaffId } = services[i];
+      const { serviceId, sequenceNo, isEmergency } = services[i];
       const serviceInput = {
         ownerId,
         orderId: appointment._id,
         serviceId,
         sequenceNo,
         isEmergency,
-        preferredStaffId,
       };
       if (serviceTimeWindows[i]) {
         serviceInput.scheduledStart = serviceTimeWindows[i].scheduledStart;
