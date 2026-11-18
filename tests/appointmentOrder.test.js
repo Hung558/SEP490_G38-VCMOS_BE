@@ -107,7 +107,7 @@ describe('Appointment Symptom Note & Reception Check-in Intake Flow', () => {
   let onlineServiceId;
   let legacyOrderId;
 
-  test('1. Chủ nuôi không được tự truyền trường intake khi đặt lịch online (400)', async () => {
+  test('1. Chủ nuôi không được tự truyền trường intake hoặc preferredStaffId khi đặt lịch online (400)', async () => {
     const res = await request(app)
       .post('/api/appointment-services/online-booking')
       .set('Authorization', `Bearer ${ownerToken}`)
@@ -121,6 +121,18 @@ describe('Appointment Symptom Note & Reception Check-in Intake Flow', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/intake/i);
+
+    const prefStaffRes = await request(app)
+      .post('/api/appointment-services/online-booking')
+      .set('Authorization', `Bearer ${ownerToken}`)
+      .send({
+        petId: petDoc._id,
+        date: formatDateOffsetVN(1),
+        services: [{ serviceId: medicalService._id, preferredStaffId: vetUser._id }],
+      });
+
+    expect(prefStaffRes.status).toBe(400);
+    expect(prefStaffRes.body.message).toMatch(/preferredStaffId/i);
   });
 
   test('2. Chủ nuôi đặt lịch online kèm ghi chú triệu chứng (note) thành công', async () => {

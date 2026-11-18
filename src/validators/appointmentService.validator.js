@@ -3,7 +3,6 @@ const AppointmentService = require('../models/AppointmentService');
 const AppointmentOrder = require('../models/AppointmentOrder');
 const Service = require('../models/Service');
 const User = require('../models/User');
-const StaffSchedule = require('../models/StaffSchedule');
 
 const BLOCKED_ORDER_STATUSES = ['Done', 'Cancelled', 'Overdue'];
 const BLOCKED_SERVICE_STATUSES = ['InProgress', 'Done', 'Cancelled', 'Overdue'];
@@ -23,10 +22,10 @@ const DEFAULT_ONLY_FIELDS = [
 // Các trường của lịch hẹn không được truyền vào khi đặt lịch (dùng giá trị mặc định / sinh tự động)
 const BOOKING_ORDER_DEFAULT_ONLY_FIELDS = ['code', 'isOnline', 'derivedStatus', 'checkedInAt', 'slotEnd', 'intake'];
 
-// Mỗi dịch vụ trong lịch đặt: ngoài các trường mặc định, orderId và giờ dự kiến cũng không được truyền (BE tự tính từ slotStart + defaultDuration)
-// Ngoại lệ: `preferredStaffId` được phép truyền để chủ nuôi chọn nhân sự ưu tiên (Bác sĩ / Groomer)
+// Mỗi dịch vụ trong lịch đặt: ngoài các trường mặc định (kể cả preferredStaffId, assignedStaffId),
+// orderId và giờ dự kiến cũng không được truyền khi đặt online (BE tự tính từ slotStart + defaultDuration)
 const BOOKING_SERVICE_DEFAULT_ONLY_FIELDS = [
-  ...DEFAULT_ONLY_FIELDS.filter((field) => field !== 'preferredStaffId'),
+  ...DEFAULT_ONLY_FIELDS,
   'orderId',
   'scheduledStart',
   'scheduledEnd',
@@ -54,12 +53,6 @@ const currentTimeVN = () =>
 const parseTimeToMinutes = (timeStr) => {
   const [hours, minutes] = timeStr.split(':').map(Number);
   return hours * 60 + minutes;
-};
-
-const formatMinutesToTime = (totalMinutes) => {
-  const hours = String(Math.floor(totalMinutes / 60)).padStart(2, '0');
-  const minutes = String(totalMinutes % 60).padStart(2, '0');
-  return `${hours}:${minutes}`;
 };
 
 const createError = (message, statusCode = 400) => {
@@ -138,13 +131,9 @@ async function validateCreateOnlineAppointmentService(payload) {
  *
  * Việc thú cưng có tồn tại / thuộc về chủ nuôi và chống đặt trùng trong ngày
  * do `createOnlineAppointment` xử lý, không kiểm tra lại ở đây.
+ * Khách hàng không tự chọn nhân sự (`preferredStaffId` / `assignedStaffId`) khi đặt online.
  *
- * `services[].preferredStaffId` (tùy chọn): nhân sự mà chủ nuôi muốn được phục vụ. Phải là nhân sự Active,
- * có vai trò khớp `requiredRole` của dịch vụ, và không báo bận (StaffSchedule): nếu có `slotStart` thì ở ca của
- * dịch vụ đó, nếu không thì không được bận cả ngày.
- * Đây chỉ là mong muốn; Lễ tân vẫn là người phân công chính thức (`assignedStaffId`).
- *
- * @param {Object} payload - { petId, date, note?, slotStart?, services: [{ serviceId, sequenceNo?, isEmergency?, preferredStaffId? }] }
+ * @param {Object} payload - { petId, date, note?, slotStart?, services: [{ serviceId, sequenceNo?, isEmergency? }] }
  * @returns {Promise<Object>} payload
  * @throws {Error} lỗi với `statusCode` 400 | 404 | 409 và thông báo tiếng Việt
  */
@@ -215,15 +204,6 @@ async function validateCreateOnlineBooking(payload) {
     if (item.isEmergency !== undefined && typeof item.isEmergency !== 'boolean') {
       throw createError(`${label}: isEmergency phải là true hoặc false`);
     }
-
-    // null / không truyền = không chọn nhân sự ưu tiên
-    if (
-      item.preferredStaffId !== undefined &&
-      item.preferredStaffId !== null &&
-      (typeof item.preferredStaffId !== 'string' || !isValidObjectId(item.preferredStaffId))
-    ) {
-      throw createError(`${label}: preferredStaffId không hợp lệ`);
-    }
   });
 
   // 4. Kiểm tra trùng số thứ tự: mô phỏng đúng cách `createOnlineBooking` tạo dịch vụ tuần tự
@@ -244,21 +224,17 @@ async function validateCreateOnlineBooking(payload) {
   // 5. Kiểm tra dịch vụ tồn tại và đang hoạt động (1 truy vấn cho tất cả)
   const serviceIds = [...new Set(services.map((s) => String(s.serviceId)))];
   const found = await Service.find({ _id: { $in: serviceIds } })
-    .select('name category requiredRole status defaultDuration')
+    .select('status defaultDuration')
     .lean();
   const serviceMap = new Map(found.map((s) => [String(s._id), s]));
 
   let totalDurationMinutes = 0;
-  const serviceStartTimes = []; // giờ bắt đầu dự kiến của từng dịch vụ (khớp cách createOnlineBooking nối tiếp giờ)
   services.forEach((item, i) => {
     const service = serviceMap.get(String(item.serviceId));
     if (!service) throw createError(`services[${i}]: Không tìm thấy dịch vụ`, 404);
     if (service.status !== 'Active') throw createError(`services[${i}]: Dịch vụ hiện không hoạt động`);
 
     const duration = Number(service.defaultDuration) > 0 ? Number(service.defaultDuration) : DEFAULT_SERVICE_DURATION;
-    if (cleanSlotStart !== undefined) {
-      serviceStartTimes[i] = formatMinutesToTime(parseTimeToMinutes(cleanSlotStart) + totalDurationMinutes);
-    }
     totalDurationMinutes += duration;
   });
 
@@ -266,72 +242,6 @@ async function validateCreateOnlineBooking(payload) {
     const endMinutes = parseTimeToMinutes(cleanSlotStart) + totalDurationMinutes;
     if (endMinutes > CLINIC_CLOSE_MINUTES) {
       throw createError(`Tổng thời lượng dịch vụ vượt quá giờ đóng cửa phòng khám (${CLINIC_CLOSE_TIME})`);
-    }
-  }
-
-  // 6. Kiểm tra nhân sự ưu tiên (1 truy vấn cho tất cả nhân sự được chọn)
-  const preferredIds = [
-    ...new Set(services.filter((s) => s.preferredStaffId).map((s) => String(s.preferredStaffId))),
-  ];
-  if (preferredIds.length > 0) {
-    const staffList = await User.find({ _id: { $in: preferredIds } })
-      .select('fullName role status')
-      .lean();
-    const staffMap = new Map(staffList.map((u) => [String(u._id), u]));
-
-    // require trong hàm để tránh phụ thuộc vòng giữa validator và service
-    const { resolveServiceRequiredRole } = require('../services/service.service');
-    const { getShiftFromTime } = require('../services/staffSchedule.service');
-
-    // Mô hình blacklist: nhân sự mặc định rảnh, chỉ có bản ghi khi báo bận theo Ngày x Ca.
-    // Lấy toàn bộ ca bận của các nhân sự được chọn trong ngày hẹn bằng 1 truy vấn.
-    const allShifts = StaffSchedule.schema.path('shift').enumValues;
-    const busyRecords = await StaffSchedule.find({ date, staffId: { $in: preferredIds } })
-      .select('staffId shift')
-      .lean();
-    const busyShiftsByStaff = new Map();
-    busyRecords.forEach((r) => {
-      const key = String(r.staffId);
-      if (!busyShiftsByStaff.has(key)) busyShiftsByStaff.set(key, new Set());
-      busyShiftsByStaff.get(key).add(r.shift);
-    });
-
-    for (let i = 0; i < services.length; i++) {
-      const item = services[i];
-      if (!item.preferredStaffId) continue;
-
-      const label = `services[${i}]`;
-      const staff = staffMap.get(String(item.preferredStaffId));
-      if (!staff) throw createError(`${label}: Không tìm thấy nhân viên được chọn`, 404);
-      if (!CLINICAL_STAFF_ROLES.includes(staff.role)) {
-        throw createError(`${label}: Nhân viên được chọn phải có vai trò Veterinarian hoặc Groomer`);
-      }
-      if (staff.status !== 'Active') {
-        throw createError(`${label}: Nhân viên được chọn hiện không ở trạng thái hoạt động`);
-      }
-
-      const service = serviceMap.get(String(item.serviceId));
-      const expectedRole = resolveServiceRequiredRole(service);
-      if (expectedRole && staff.role !== expectedRole) {
-        throw createError(
-          `${label}: Dịch vụ "${service.name}" (${service.category}) chỉ có thể chọn nhân viên có vai trò ${expectedRole}`
-        );
-      }
-
-      const busyShifts = busyShiftsByStaff.get(String(item.preferredStaffId)) || new Set();
-      if (serviceStartTimes[i]) {
-        // Có slotStart: chỉ cần rảnh ở ca chứa giờ bắt đầu dự kiến của dịch vụ này
-        const shift = getShiftFromTime(serviceStartTimes[i]);
-        if (busyShifts.has(shift)) {
-          throw createError(
-            `${label}: Nhân viên "${staff.fullName}" đã báo bận vào ca ${shift} ngày ${date}`,
-            409
-          );
-        }
-      } else if (allShifts.every((shift) => busyShifts.has(shift))) {
-        // Không có slotStart (chưa biết ca): chỉ từ chối khi nhân sự bận cả ngày
-        throw createError(`${label}: Nhân viên "${staff.fullName}" đã báo bận cả ngày ${date}`, 409);
-      }
     }
   }
 
