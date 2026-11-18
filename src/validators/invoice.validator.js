@@ -3,6 +3,11 @@ const { isValidObjectId } = require('mongoose');
 const PAYMENT_STATUSES = ['Unpaid', 'Paid', 'Refunded'];
 const PAYMENT_METHODS = ['Cash', 'VNPay'];
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const MAX_REPORT_RANGE_DAYS = 366;
+const PRODUCT_CATEGORIES = ['Medicine', 'Vaccine', 'Retail'];
+const BEST_SELLING_SORT_FIELDS = ['quantity', 'revenue'];
 const MAX_RETAIL_QUANTITY = 99;
 const MAX_PRESCRIPTION_QUANTITY = 999;
 
@@ -293,6 +298,60 @@ const validateListInvoicesQuery = (query = {}) => {
   };
 };
 
+/**
+ * Validate query báo cáo sản phẩm bán chạy theo khoảng ngày [from, to]
+ * Mặc định: to = hôm nay (giờ VN), from = to.
+ */
+const validateBestSellingProductsQuery = (query = {}) => {
+  const errors = {};
+  const { from, to, category, sortBy } = query;
+
+  if (!isBlank(from) && !isRealDate(from)) {
+    errors.from = 'Ngày bắt đầu (from) phải đúng định dạng YYYY-MM-DD';
+  }
+  if (!isBlank(to) && !isRealDate(to)) {
+    errors.to = 'Ngày kết thúc (to) phải đúng định dạng YYYY-MM-DD';
+  }
+
+  const today = new Date(Date.now() + VN_OFFSET_MS).toISOString().slice(0, 10);
+  const cleanTo = !isBlank(to) ? to : today;
+  const cleanFrom = !isBlank(from) ? from : cleanTo;
+
+  if (!errors.from && !errors.to) {
+    if (cleanFrom > cleanTo) {
+      errors.from = 'Ngày bắt đầu (from) không được sau ngày kết thúc (to)';
+    } else {
+      const days =
+        (Date.parse(`${cleanTo}T00:00:00Z`) - Date.parse(`${cleanFrom}T00:00:00Z`)) / MS_PER_DAY + 1;
+      if (days > MAX_REPORT_RANGE_DAYS) {
+        errors.to = `Khoảng thời gian báo cáo tối đa ${MAX_REPORT_RANGE_DAYS} ngày`;
+      }
+    }
+  }
+
+  if (!isBlank(category) && !PRODUCT_CATEGORIES.includes(category)) {
+    errors.category = `Danh mục sản phẩm phải là một trong: ${PRODUCT_CATEGORIES.join(', ')}`;
+  }
+
+  if (!isBlank(sortBy) && !BEST_SELLING_SORT_FIELDS.includes(sortBy)) {
+    errors.sortBy = `Tiêu chí sắp xếp (sortBy) phải là một trong: ${BEST_SELLING_SORT_FIELDS.join(', ')}`;
+  }
+
+  const limit = Math.min(Math.max(parseInt(query.limit, 10) || 10, 1), 50);
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+    value: {
+      from: cleanFrom,
+      to: cleanTo,
+      category: !isBlank(category) ? category : undefined,
+      sortBy: !isBlank(sortBy) ? sortBy : 'quantity',
+      limit,
+    },
+  };
+};
+
 module.exports = {
   PAYMENT_STATUSES,
   PAYMENT_METHODS,
@@ -301,5 +360,5 @@ module.exports = {
   validateUpdateInvoiceRetailItems,
   validatePayCash,
   validateListInvoicesQuery,
+  validateBestSellingProductsQuery,
 };
-

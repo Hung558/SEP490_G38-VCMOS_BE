@@ -5,6 +5,7 @@ const {
   validateUpdateInvoiceRetailItems,
   validatePayCash,
   validateListInvoicesQuery,
+  validateBestSellingProductsQuery,
 } = require('../validators/invoice.validator');
 
 const handleControllerError = (res, err) => {
@@ -217,6 +218,27 @@ const getInvoicePdf = async (req, res) => {
 };
 
 /**
+ * GET /api/invoices/reports/best-selling-products
+ * Admin xem báo cáo sản phẩm bán chạy theo ngày / tuần / tháng
+ */
+const getBestSellingProducts = async (req, res) => {
+  try {
+    const queryCheck = validateBestSellingProductsQuery(req.query);
+    if (!queryCheck.isValid) {
+      return res.status(400).json({
+        message: 'Tham số báo cáo sản phẩm bán chạy không hợp lệ',
+        errors: queryCheck.errors,
+      });
+    }
+
+    const result = await invoiceService.getBestSellingProducts(queryCheck.value);
+    return res.status(200).json(result);
+  } catch (err) {
+    return handleControllerError(res, err);
+  }
+};
+
+/**
  * DELETE /api/invoices/:id
  * Chặn xóa vật lý hóa đơn theo quy tắc BR-22
  */
@@ -236,6 +258,6 @@ module.exports = {
   listMyInvoices,
   getInvoiceById,
   getInvoicePdf,
+  getBestSellingProducts,
   blockDeleteInvoice,
 };
-

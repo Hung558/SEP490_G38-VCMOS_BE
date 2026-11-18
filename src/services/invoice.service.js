@@ -18,6 +18,7 @@ const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 6;
 const MAX_CODE_RETRIES = 5;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const VN_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7, Việt Nam không có DST
 
 const pdfPrinter = new PdfPrinter({
   Roboto: {
@@ -1007,6 +1008,77 @@ const generateInvoicePdf = async (currentUser, invoiceId) => {
   };
 };
 
+/**
+ * 10. Báo cáo sản phẩm bán chạy theo khoảng ngày [from, to] (giờ VN, gồm cả hai đầu)
+ * (GET /api/invoices/reports/best-selling-products)
+ *
+ * - Chỉ tính hóa đơn Paid, theo thời điểm thanh toán (paidAt); Unpaid / Refunded bị loại.
+ * - Gồm cả sản phẩm bán lẻ lẫn thuốc/vaccine kê đơn (đều là dòng type = 'Product').
+ */
+const getBestSellingProducts = async ({ from, to, category, sortBy = 'quantity', limit = 10 }) => {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  const rangeStart = new Date(Date.UTC(fy, fm - 1, fd) - VN_OFFSET_MS);
+  const rangeEnd = new Date(Date.UTC(ty, tm - 1, td) + MS_PER_DAY - VN_OFFSET_MS); // exclusive
+
+  const pipeline = [
+    { $match: { paymentStatus: 'Paid', paidAt: { $gte: rangeStart, $lt: rangeEnd } } },
+    { $unwind: '$items' },
+    { $match: { 'items.type': 'Product' } },
+    {
+      $group: {
+        _id: '$items.refId',
+        totalQuantity: { $sum: '$items.quantity' },
+        totalRevenue: { $sum: '$items.subtotal' },
+        invoiceIds: { $addToSet: '$_id' },
+        nameSnapshot: { $first: '$items.itemNameSnapshot' },
+      },
+    },
+    {
+      $lookup: {
+        from: Product.collection.name,
+        localField: '_id',
+        foreignField: '_id',
+        as: 'product',
+      },
+    },
+    { $unwind: { path: '$product', preserveNullAndEmptyArrays: true } },
+  ];
+
+  if (category) pipeline.push({ $match: { 'product.category': category } });
+
+  const primarySort = sortBy === 'revenue' ? 'totalRevenue' : 'totalQuantity';
+  const secondarySort = sortBy === 'revenue' ? 'totalQuantity' : 'totalRevenue';
+
+  pipeline.push(
+    {
+      $project: {
+        _id: 0,
+        productId: '$_id',
+        code: '$product.code',
+        name: { $ifNull: ['$product.name', '$nameSnapshot'] },
+        category: '$product.category',
+        unit: '$product.unit',
+        totalQuantity: 1,
+        totalRevenue: 1,
+        invoiceCount: { $size: '$invoiceIds' },
+      },
+    },
+    { $sort: { [primarySort]: -1, [secondarySort]: -1, name: 1 } },
+    { $limit: limit }
+  );
+
+  const rows = await Invoice.aggregate(pipeline);
+
+  return {
+    from,
+    to,
+    sortBy,
+    category: category || null,
+    items: rows.map((row, idx) => ({ rank: idx + 1, ...row })),
+  };
+};
+
 module.exports = {
   createInvoice,
   updateInvoiceRetailItems,
@@ -1018,5 +1090,5 @@ module.exports = {
   listMyInvoices,
   getInvoiceById,
   generateInvoicePdf,
+  getBestSellingProducts,
 };
-
