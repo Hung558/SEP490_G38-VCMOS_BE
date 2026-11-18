@@ -17,11 +17,13 @@ const invoiceSchema = new mongoose.Schema(
     issuedById: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     items: { type: [invoiceItemSchema], default: [] },
     totalAmount: { type: Number, min: 0, default: 0 },
-    paymentMethod: { type: String, enum: ['Cash', 'VNPay', null], default: null },
+    paymentMethod: { type: String, enum: ['Cash', 'VNPay', 'PayOS', null], default: null },
     paymentStatus: { type: String, enum: ['Unpaid', 'Paid', 'Refunded'], default: 'Unpaid' },
     issuedAt: { type: Date, default: Date.now },
     paidAt: { type: Date, default: null },
     vnpayTxnRef: { type: String, default: null },
+    payosOrderCode: { type: Number, default: null },
+    payosPaymentLinkId: { type: String, default: null },
   },
   { timestamps: true }
 );
@@ -39,6 +41,10 @@ invoiceSchema.index(
 invoiceSchema.index(
   { vnpayTxnRef: 1 },
   { unique: true, partialFilterExpression: { vnpayTxnRef: { $type: 'string' } } }
+);
+invoiceSchema.index(
+  { payosOrderCode: 1 },
+  { unique: true, partialFilterExpression: { payosOrderCode: { $type: 'number' } } }
 );
 
 module.exports = mongoose.model('Invoice', invoiceSchema, 'invoices');
