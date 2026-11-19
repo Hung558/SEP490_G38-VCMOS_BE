@@ -20,6 +20,7 @@ const subtaskRequestRoutes = require('./src/routes/subtaskRequest.routes');
 const staffScheduleRoutes = require('./src/routes/staffSchedule.routes');
 const inpatientRecordRoutes = require('./src/routes/inpatientRecord.routes');
 const invoiceRoutes = require('./src/routes/invoice.routes');
+const communityPostRoutes = require('./src/routes/communityPost.routes');
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.use('/api/subtask-requests', subtaskRequestRoutes);
 app.use('/api/staff-schedules', staffScheduleRoutes);
 app.use('/api/inpatient-records', inpatientRecordRoutes);
 app.use('/api/invoices', invoiceRoutes);
+app.use('/api/community-posts', communityPostRoutes);
 
 // Global Error Middleware: mọi lỗi đẩy qua next(err) đều trả về JSON thống nhất kèm message tiếng Việt
 app.use((err, req, res, next) => {
