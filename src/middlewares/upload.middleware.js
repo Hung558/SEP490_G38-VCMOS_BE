@@ -3,19 +3,24 @@ const multer = require('multer');
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB mỗi ảnh
 const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
+const imageFileFilter = (req, file, cb) => {
+  if (!ALLOWED_IMAGE_MIME_TYPES.includes(file.mimetype)) {
+    const err = new Error('Ảnh phải có định dạng JPEG, PNG hoặc WebP');
+    err.statusCode = 400;
+    return cb(err);
+  }
+  return cb(null, true);
+};
+
 // Lưu ảnh trong bộ nhớ (buffer) rồi đẩy thẳng lên Cloudinary, không ghi ra đĩa
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_IMAGE_SIZE_BYTES, files: 2 },
-  fileFilter: (req, file, cb) => {
-    if (!ALLOWED_IMAGE_MIME_TYPES.includes(file.mimetype)) {
-      const err = new Error('Ảnh phải có định dạng JPEG, PNG hoặc WebP');
-      err.statusCode = 400;
-      return cb(err);
-    }
-    return cb(null, true);
-  },
-});
+const createImageUpload = (maxFiles) =>
+  multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_IMAGE_SIZE_BYTES, files: maxFiles },
+    fileFilter: imageFileFilter,
+  });
+
+const upload = createImageUpload(2);
 
 const groomingNotePhotos = upload.fields([
   { name: 'beforePhoto', maxCount: 1 },
@@ -23,6 +28,14 @@ const groomingNotePhotos = upload.fields([
 ]);
 
 const subtaskResultPhoto = upload.single('resultImage');
+
+// Bài viết cộng đồng: 1 ảnh bìa + tối đa 10 ảnh cho các mốc timeline
+const MAX_TIMELINE_IMAGES = 10;
+const communityPostUpload = createImageUpload(1 + MAX_TIMELINE_IMAGES);
+const communityPostPhotos = communityPostUpload.fields([
+  { name: 'image', maxCount: 1 },
+  { name: 'timelineImages', maxCount: MAX_TIMELINE_IMAGES },
+]);
 
 /**
  * Bao bọc middleware multer để chuẩn hoá lỗi upload (dung lượng, số lượng, sai tên trường) về 400 JSON.
@@ -68,7 +81,30 @@ const uploadSubtaskResultPhoto = createUploadErrorHandler(
   1
 );
 
+const handleCommunityPostPhotos = createUploadErrorHandler(
+  communityPostPhotos,
+  `Chỉ nhận ảnh qua trường image (1 ảnh) và timelineImages (tối đa ${MAX_TIMELINE_IMAGES} ảnh)`,
+  1 + MAX_TIMELINE_IMAGES
+);
+
+/**
+ * Nhận bài viết cộng đồng CHỈ qua multipart/form-data (mọi ảnh phải tải lên Cloudinary), gồm:
+ * - `image`: ảnh chính của bài (tối đa 1 ảnh)
+ * - `timelineImages`: ảnh cho các mốc timeline (tối đa 10 ảnh); mốc nào dùng ảnh nào được chỉ định
+ *   bằng `timelineItems[].imageIndex` (vị trí của ảnh trong `timelineImages`).
+ * Gán `req.files = { image?: [file], timelineImages?: [file, ...] }`.
+ * Request không phải multipart (vd. JSON) bị từ chối 415.
+ */
+const uploadCommunityPostPhotos = (req, res, next) => {
+  if (!req.is('multipart/form-data')) {
+    return res.status(415).json({ message: 'Chỉ chấp nhận multipart/form-data' });
+  }
+  return handleCommunityPostPhotos(req, res, next);
+};
+
 module.exports = {
   uploadGroomingNotePhotos,
   uploadSubtaskResultPhoto,
+  uploadCommunityPostPhotos,
+  MAX_TIMELINE_IMAGES,
 };
