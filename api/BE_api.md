@@ -212,6 +212,7 @@
 | :--- | :--- | :--- | :--- |
 | `GET` | `http://localhost:9999/api/pets` | 🔒 `PetOwner` | Xem danh sách thú cưng của chính mình |
 | `GET` | `http://localhost:9999/api/pets/:id` | 🔒 `PetOwner`, Nhân sự PK | Xem chi tiết 1 thú cưng (Chủ nuôi xem của mình, Nhân sự PK xem mọi thú cưng) |
+| `GET` | `http://localhost:9999/api/pets/:petId/timeline?type=All&status=&from=&to=&page=1&limit=20` | 🔒 `PetOwner` (chủ sở hữu), Nhân sự PK | Dòng thời gian thú cưng hợp nhất (`UC-13`, `SCR-08`, `BR-23`): gộp lịch hẹn, bệnh án SOAP, Sub-task, Grooming Note, nội trú + nhật ký, chuồng, bài chia sẻ & hoá đơn (ẩn hoá đơn với Vet/Groomer) |
 | `POST` | `http://localhost:9999/api/pets` | 🔒 `PetOwner` | Thêm thú cưng mới (`multipart/form-data` hoặc `JSON`, tự sinh `PET-XXXXXX`) |
 | `PUT` | `http://localhost:9999/api/pets/:id` | 🔒 `PetOwner` | Cập nhật thông tin / ảnh thú cưng của mình |
 | `DELETE` | `http://localhost:9999/api/pets/:id` | 🔒 `PetOwner` | Xóa mềm thú cưng (`status: 'Deleted'`) |
