@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { protect } = require('../middlewares/auth.middleware');
 const petController = require('../controllers/pet.controller');
+const petTimelineController = require('../controllers/petTimeline.controller');
 
 const router = express.Router();
 
@@ -42,6 +43,8 @@ router
   .route('/')
   .get(petController.listPets) //                      GET    /pets
   .post(uploadPhoto, petController.createPet); //       POST   /pets
+
+router.get('/:petId/timeline', petTimelineController.getPetTimeline);
 
 router
   .route('/:petId')
