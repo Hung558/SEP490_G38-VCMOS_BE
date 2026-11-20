@@ -42,13 +42,13 @@
 ## 3. Thống kê Dashboard cho Admin & Lễ tân (`T-52` — `PB-22`, `SCR-28`, `SCR-16`)
 > *Đã có:* `GET /api/invoices/reports/best-selling-products` (`UC-65` — Top sản phẩm bán chạy).
 
-- [ ] **Thống kê doanh thu (`UC-63`, `SCR-28`)**
-  - Lọc theo Ngày / Tuần / Tháng / Khoảng thời gian (tối đa 12 tháng).
-  - Trả về: tổng doanh thu, số hoá đơn `Paid`, giá trị trung bình hoá đơn, % thay đổi so với kỳ trước, biểu đồ doanh thu theo ngày/tháng, tách theo nhóm dịch vụ (`Service.category`) và phương thức thanh toán (`Cash`, `VNPay`, `PayOS`).
-- [ ] **Thống kê lịch hẹn & vận hành (`UC-64`, `SCR-28`, `SCR-16`)**
-  - Đếm số đơn hẹn theo trạng thái (`Booked`, `CheckedIn`, `InProgress`, `WaitOwner`, `Done`, `Overdue`, `Cancelled`).
-  - Tỷ lệ khách Online vs Walk-in, số lượt dịch vụ theo danh mục, tỷ lệ lấp đầy chuồng (`Available` / `Occupied`).
-  - Widget thống kê nhanh tại quầy cho Lễ tân (`SCR-16`).
+- [x] **Thống kê doanh thu (`UC-63`, `SCR-28` — `GET /api/reports/revenue`)**
+  - Lọc theo Ngày / Tuần / Tháng / Khoảng thời gian (tối đa 12 tháng / 366 ngày), bổ sung Compound Index `{ paymentStatus: 1, paidAt: -1 }` trên `Invoice`.
+  - Trả về: tổng doanh thu, số hoá đơn `Paid`, giá trị trung bình hoá đơn, % thay đổi so với kỳ trước, biểu đồ doanh thu theo ngày/tháng (tự lấp ngày/tháng trống bằng `0`), tách theo nhóm dịch vụ (`Service.category`), loại dòng hoá đơn (`Service`/`Product`/`InpatientDay`) và phương thức thanh toán (`Cash`, `VNPay`, `PayOS`).
+- [x] **Thống kê lịch hẹn & vận hành (`UC-64`, `SCR-28`, `SCR-16` — `GET /api/reports/operations` & `GET /api/reports/front-desk`)**
+  - Đếm số đơn hẹn theo trạng thái (`Booked`, `CheckedIn`, `InProgress`, `WaitOwner`, `Done`, `Overdue`, `Cancelled`), tỷ lệ Online vs Walk-in, số lượt dịch vụ theo danh mục, Top 5 dịch vụ nổi bật, tỷ lệ lấp đầy chuồng theo khu vực (`Holding` / `InpatientWard`).
+  - Widget thống kê nhanh tại quầy cho Lễ tân & Admin (`SCR-16`), kèm thời gian chờ trung bình từ Check-in tới khi bắt đầu dịch vụ và số tiền đã thu theo phương thức.
+  - Đã có file test `tests/report.test.js` và tài liệu trong `api/reports/`.
 
 ---
 

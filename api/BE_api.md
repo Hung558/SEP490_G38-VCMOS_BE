@@ -22,6 +22,7 @@
 11. [Sub-task Cận Lâm Sàng & Dịch Vụ Phụ (`Sub-task Requests` — `/api/subtask-requests`)](#11--sub-task-cận-lâm-sàng--dịch-vụ-phụ-sub-task-requests--apisubtask-requests)
 12. [Lịch Báo Bận 3 Ca Theo Cơ Chế Blacklist (`Staff Schedules` — `/api/staff-schedules`)](#12--lịch-báo-bận-3-ca-theo-cơ-chế-blacklist-staff-schedules--apistaff-schedules)
 13. [Hóa Đơn Tổng Hợp & Thanh Toán Tiền Mặt / VNPay (`Invoices` — `/api/invoices`)](#13--hóa-đơn-tổng-hợp--thanh-toán-tiền-mặt--vnpay-invoices--apiinvoices)
+14. [Thống Kê & Báo Cáo Dashboard (`Reports` — `/api/reports`)](#14--thống-kê--báo-cáo-dashboard-reports--apireports)
 
 ---
 
@@ -1047,6 +1048,19 @@
 - `GET /api/invoices/me` (`PetOwner` — chỉ thấy hóa đơn của thú cưng mình)
 - `GET /api/invoices/:id` & `GET /api/invoices/:id/pdf` (`Receptionist`, `Admin`, hoặc đúng `PetOwner` sở hữu thú cưng theo `BR-23`; trả file PDF `application/pdf`).
 - `DELETE /api/invoices/:id`: Trả `403 Forbidden` theo quy định không xóa vật lý hóa đơn (**`BR-22`**).
+
+---
+
+## 14. 📊 Thống Kê & Báo Cáo Dashboard (`Reports` — `/api/reports`)
+*(Tài liệu chi tiết cho FE nằm trong `api/reports/`: `revenue-analytics.md`, `operational-analytics.md`, `front-desk-statistics.md`)*
+
+| Method | Endpoint | Quyền | Mô tả nhanh |
+| :--- | :--- | :--- | :--- |
+| `GET` | `http://localhost:9999/api/reports/revenue?period=month&from=&to=&groupBy=day` | 🔒 `Admin` | Thống kê doanh thu (`UC-63`, `SCR-28`): KPI tổng doanh thu, % tăng trưởng so kỳ trước, biểu đồ theo ngày/tháng, phân bổ theo phương thức thanh toán (`Cash`/`VNPay`/`PayOS`), nhóm dịch vụ & loại dòng hoá đơn |
+| `GET` | `http://localhost:9999/api/reports/operations?period=month&from=&to=` | 🔒 `Admin` | Thống kê vận hành (`UC-64`, `SCR-28`): đơn hẹn theo 7 trạng thái, tỷ lệ Online vs Walk-in, lượt dịch vụ theo danh mục, Top 5 dịch vụ nổi bật, công suất chuồng (`Holding`/`InpatientWard`), tổng quan khách hàng/thú cưng/tồn kho |
+| `GET` | `http://localhost:9999/api/reports/front-desk?period=day&from=&to=` | 🔒 `Receptionist`, `Admin` | Widget thống kê nhanh tại quầy Lễ tân (`SCR-16`): bộ đếm trực tiếp hôm nay, đơn theo trạng thái, thời gian chờ trung bình (phút), tổng hoá đơn & số tiền thu theo phương thức |
+| `GET` | `http://localhost:9999/api/invoices/reports/best-selling-products?from=&to=&category=&sortBy=quantity&limit=10` | 🔒 `Admin` | Top sản phẩm / thuốc bán chạy (`UC-65`, `SCR-28`) |
+
 
 
 

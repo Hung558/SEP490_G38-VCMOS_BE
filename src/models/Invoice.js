@@ -46,5 +46,8 @@ invoiceSchema.index(
   { payosOrderCode: 1 },
   { unique: true, partialFilterExpression: { payosOrderCode: { $type: 'number' } } }
 );
+// Compound index phục vụ truy vấn Aggregation thống kê doanh thu & báo cáo sản phẩm 12 tháng <= 3s (T-52)
+invoiceSchema.index({ paymentStatus: 1, paidAt: -1 });
+invoiceSchema.index({ issuedAt: -1 });
 
 module.exports = mongoose.model('Invoice', invoiceSchema, 'invoices');
