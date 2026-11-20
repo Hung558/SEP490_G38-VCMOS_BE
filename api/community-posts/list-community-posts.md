@@ -7,7 +7,7 @@ Lets a pet owner (`PetOwner`) list their **own** community posts in any status (
 | | |
 |---|---|
 | **Method** | `GET` |
-| **URL** | `{base-url}/api/community-posts` |
+| **URL** | `http://localhost:9999/api/community-posts` |
 | **Auth** | Bearer token (role `PetOwner`) |
 
 ## Headers

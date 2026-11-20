@@ -7,7 +7,7 @@ Lets a pet owner (`PetOwner`) delete their own community post **while it is stil
 | | |
 |---|---|
 | **Method** | `DELETE` |
-| **URL** | `{base-url}/api/community-posts/{id}` |
+| **URL** | `http://localhost:9999/api/community-posts/{id}` |
 | **Auth** | Bearer token (role `PetOwner`) |
 
 ## Headers

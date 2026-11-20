@@ -1,7 +1,10 @@
 const communityPostService = require('../services/communityPost.service');
 const {
   validatePostPayload,
+  validateTimelinePreviewQuery,
+  validateTimelineShareBody,
   validateListQuery,
+  validatePublicListQuery,
   validateObjectIdParam,
 } = require('../validators/communityPost.validator');
 
@@ -29,6 +32,35 @@ const create = async (req, res, next) => {
     const post = await communityPostService.createPost(req.user.id, value, files);
     return res.status(201).json({
       message: 'Đã gửi bài viết, vui lòng chờ duyệt',
+      post,
+    });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+// GET /api/community-posts/timeline-share/preview?petId=...
+const previewTimelineShare = async (req, res, next) => {
+  try {
+    const { errors, value } = validateTimelinePreviewQuery(req.query);
+    if (errors) return sendValidationError(res, errors);
+
+    const result = await communityPostService.previewTimelineFromHistory(req.user.id, value);
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+};
+
+// POST /api/community-posts/timeline-share
+const createTimelineShare = async (req, res, next) => {
+  try {
+    const { errors, value } = validateTimelineShareBody(req.body);
+    if (errors) return sendValidationError(res, errors);
+
+    const post = await communityPostService.createTimelineShareFromHistory(req.user.id, value);
+    return res.status(201).json({
+      message: 'Đã gửi bài chia sẻ hành trình, vui lòng chờ duyệt',
       post,
     });
   } catch (err) {
@@ -94,4 +126,30 @@ const remove = async (req, res, next) => {
   }
 };
 
-module.exports = { create, list, getById, update, remove };
+// GET /api/community-posts/public (Guest + PetOwner, không cần đăng nhập)
+const listPublished = async (req, res, next) => {
+  try {
+    const { errors, value } = validatePublicListQuery(req.query);
+    if (errors) return sendValidationError(res, errors);
+
+    const result = await communityPostService.listPublishedPosts(value);
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+};
+
+// GET /api/community-posts/public/:id (Guest + PetOwner, không cần đăng nhập)
+const getPublishedById = async (req, res, next) => {
+  try {
+    const idError = validateObjectIdParam(req.params.id);
+    if (idError) return sendValidationError(res, { id: idError });
+
+    const post = await communityPostService.getPublishedPost(req.params.id);
+    return res.status(200).json({ post });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+module.exports = { previewTimelineShare, createTimelineShare, create, list, getById, update, remove, listPublished, getPublishedById };

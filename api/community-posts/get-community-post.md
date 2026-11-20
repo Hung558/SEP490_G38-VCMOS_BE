@@ -7,7 +7,7 @@ Lets a pet owner (`PetOwner`) view one of their **own** community posts in any s
 | | |
 |---|---|
 | **Method** | `GET` |
-| **URL** | `{base-url}/api/community-posts/{id}` |
+| **URL** | `http://localhost:9999/api/community-posts/{id}` |
 | **Auth** | Bearer token (role `PetOwner`) |
 
 ## Headers
