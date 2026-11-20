@@ -11,6 +11,7 @@ const Product = require('../models/Product');
 const Pet = require('../models/Pet');
 const Cage = require('../models/Cage');
 const CageAssignment = require('../models/CageAssignment');
+const SubtaskRequest = require('../models/SubtaskRequest');
 const { runWithTransaction } = require('../utils/transaction');
 const { buildVnpayPaymentUrl, verifyVnpaySignature } = require('../utils/vnpay');
 const {
@@ -302,6 +303,29 @@ const createInvoice = async (receptionistId, payload) => {
             subtotal: unitPrice * qty,
           });
         }
+      }
+
+      // Subtask đã hoàn thành có gắn dịch vụ tính phí
+      const subtasks = await SubtaskRequest.find({
+        appointmentServiceId: { $in: doneServiceIds },
+        status: 'Completed',
+        serviceId: { $ne: null },
+      })
+        .populate('serviceId', 'name basePrice')
+        .lean();
+
+      for (const st of subtasks) {
+        const svc = st.serviceId;
+        if (!svc) continue;
+        const unitPrice = Number(svc.basePrice) || 0;
+        items.push({
+          type: 'Service',
+          refId: svc._id,
+          itemNameSnapshot: svc.name,
+          unitPriceSnapshot: unitPrice,
+          quantity: 1,
+          subtotal: unitPrice,
+        });
       }
     }
   }
