@@ -188,4 +188,59 @@ const deleteMyPost = async (postId, authorId) => {
   if (!post) await throwNotManageable(postId, authorId);
 };
 
-module.exports = { createPost, listMyPosts, getMyPost, updateMyPost, deleteMyPost };
+// ===== Public feed (Guest + PetOwner): chỉ bài đã duyệt =====
+const PUBLISHED_STATUS = 'Published';
+// moderationNote là ghi chú nội bộ của người duyệt → không trả ra ngoài
+const PUBLIC_POST_FIELDS = '-moderationNote';
+// Chỉ lộ tên hiển thị của tác giả, tuyệt đối không trả phone/email/code
+const PUBLIC_AUTHOR_POPULATE = { path: 'authorId', select: 'fullName' };
+// Không lộ code của thú cưng; nếu thú cưng đã bị xoá thì petId trả về null
+const PUBLIC_PET_POPULATE = {
+  path: 'petId',
+  select: 'name species breed photoUrl',
+  match: { status: 'Active' },
+};
+
+const listPublishedPosts = async ({ page, limit, postType }) => {
+  const filter = { status: PUBLISHED_STATUS };
+  if (postType) filter.postType = postType;
+
+  const [posts, total] = await Promise.all([
+    CommunityPost.find(filter)
+      .select(PUBLIC_POST_FIELDS)
+      .sort({ createdAt: -1, _id: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate(PUBLIC_AUTHOR_POPULATE)
+      .populate(PUBLIC_PET_POPULATE)
+      .lean(),
+    CommunityPost.countDocuments(filter),
+  ]);
+
+  return {
+    posts,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  };
+};
+
+// Bài không tồn tại và bài chưa/không còn Published đều trả 404 để không lộ sự tồn tại của bài bị ẩn
+const getPublishedPost = async (postId) => {
+  const post = await CommunityPost.findOne({ _id: postId, status: PUBLISHED_STATUS })
+    .select(PUBLIC_POST_FIELDS)
+    .populate(PUBLIC_AUTHOR_POPULATE)
+    .populate(PUBLIC_PET_POPULATE)
+    .lean();
+
+  if (!post) throw httpError(404, 'Không tìm thấy bài viết');
+  return post;
+};
+
+module.exports = {
+  createPost,
+  listMyPosts,
+  getMyPost,
+  updateMyPost,
+  deleteMyPost,
+  listPublishedPosts,
+  getPublishedPost,
+};

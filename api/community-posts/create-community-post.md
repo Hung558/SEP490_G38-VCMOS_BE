@@ -7,7 +7,7 @@ Lets a pet owner (`PetOwner`) create a community post. A new post always has `st
 | | |
 |---|---|
 | **Method** | `POST` |
-| **URL** | `{base-url}/api/community-posts` |
+| **URL** | `http://localhost:9999/api/community-posts` |
 | **Auth** | Bearer token (role `PetOwner`) |
 | **Content-Type** | `multipart/form-data` (the only accepted format) |
 

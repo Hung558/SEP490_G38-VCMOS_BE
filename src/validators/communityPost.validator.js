@@ -234,4 +234,20 @@ const validateListQuery = (query = {}) => {
   return { errors: Object.keys(errors).length > 0 ? errors : null, value };
 };
 
-module.exports = { validatePostPayload, validateListQuery, validateObjectIdParam };
+/**
+ * Kiểm tra query cho feed công khai (Guest + PetOwner): chỉ page, limit, postType.
+ * `status` bị bỏ qua hoàn toàn vì feed công khai luôn chỉ trả bài Published.
+ * @returns {{ errors: Object|null, value: { page: number, limit: number, postType?: string } }}
+ */
+const validatePublicListQuery = (query = {}) => {
+  const { errors, value } = validateListQuery({ ...query, status: undefined });
+  delete value.status;
+  return { errors, value };
+};
+
+module.exports = {
+  validatePostPayload,
+  validateListQuery,
+  validatePublicListQuery,
+  validateObjectIdParam,
+};

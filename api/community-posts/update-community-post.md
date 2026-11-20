@@ -7,7 +7,7 @@ Lets a pet owner (`PetOwner`) edit their own community post **while it is still 
 | | |
 |---|---|
 | **Method** | `PUT` |
-| **URL** | `{base-url}/api/community-posts/{id}` |
+| **URL** | `http://localhost:9999/api/community-posts/{id}` |
 | **Auth** | Bearer token (role `PetOwner`) |
 | **Content-Type** | `multipart/form-data` (the only accepted format) |
 

@@ -2,6 +2,7 @@ const communityPostService = require('../services/communityPost.service');
 const {
   validatePostPayload,
   validateListQuery,
+  validatePublicListQuery,
   validateObjectIdParam,
 } = require('../validators/communityPost.validator');
 
@@ -94,4 +95,30 @@ const remove = async (req, res, next) => {
   }
 };
 
-module.exports = { create, list, getById, update, remove };
+// GET /api/community-posts/public (Guest + PetOwner, không cần đăng nhập)
+const listPublished = async (req, res, next) => {
+  try {
+    const { errors, value } = validatePublicListQuery(req.query);
+    if (errors) return sendValidationError(res, errors);
+
+    const result = await communityPostService.listPublishedPosts(value);
+    return res.status(200).json(result);
+  } catch (err) {
+    return next(err);
+  }
+};
+
+// GET /api/community-posts/public/:id (Guest + PetOwner, không cần đăng nhập)
+const getPublishedById = async (req, res, next) => {
+  try {
+    const idError = validateObjectIdParam(req.params.id);
+    if (idError) return sendValidationError(res, { id: idError });
+
+    const post = await communityPostService.getPublishedPost(req.params.id);
+    return res.status(200).json({ post });
+  } catch (err) {
+    return next(err);
+  }
+};
+
+module.exports = { create, list, getById, update, remove, listPublished, getPublishedById };
