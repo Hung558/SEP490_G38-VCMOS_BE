@@ -245,8 +245,76 @@ const validatePublicListQuery = (query = {}) => {
   return { errors, value };
 };
 
+/**
+ * Kiểm tra query xem trước hành trình từ lịch sử khám: chỉ cần petId.
+ * @returns {{ errors: Object|null, value: { petId?: string } }}
+ */
+const validateTimelinePreviewQuery = (query = {}) => {
+  const errors = {};
+  const value = {};
+
+  if (isBlank(query.petId)) {
+    errors.petId = 'Thú cưng là bắt buộc';
+  } else if (!isObjectId(query.petId)) {
+    errors.petId = 'ID thú cưng không hợp lệ';
+  } else {
+    value.petId = query.petId;
+  }
+
+  return { errors: Object.keys(errors).length > 0 ? errors : null, value };
+};
+
+/**
+ * Kiểm tra body tạo bài TimelineShare từ lịch sử khám (application/json).
+ * Chỉ nhận: petId, orderIds (tuỳ chọn, bỏ trống = tất cả đơn Done gần nhất), content (tuỳ chọn).
+ * Không nhận bất kỳ nội dung timeline nào từ client: mốc thời gian luôn do server dựng từ dữ liệu khám.
+ * @returns {{ errors: Object|null, value: { petId?: string, orderIds?: string[], content: string } }}
+ */
+const validateTimelineShareBody = (body) => {
+  const errors = {};
+  const src = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  const value = { content: '' };
+
+  if (isBlank(src.petId)) {
+    errors.petId = 'Thú cưng là bắt buộc';
+  } else if (!isObjectId(src.petId)) {
+    errors.petId = 'ID thú cưng không hợp lệ';
+  } else {
+    value.petId = src.petId;
+  }
+
+  if (!isBlank(src.orderIds)) {
+    if (!Array.isArray(src.orderIds) || src.orderIds.length === 0) {
+      errors.orderIds = 'orderIds phải là mảng gồm ít nhất 1 ID đơn khám';
+    } else if (!src.orderIds.every(isObjectId)) {
+      errors.orderIds = 'orderIds chứa ID đơn khám không hợp lệ';
+    } else {
+      const unique = [...new Set(src.orderIds)];
+      if (unique.length > MAX_TIMELINE_ITEMS) {
+        errors.orderIds = `Tối đa ${MAX_TIMELINE_ITEMS} đơn khám`;
+      } else {
+        value.orderIds = unique;
+      }
+    }
+  }
+
+  if (!isBlank(src.content)) {
+    if (typeof src.content !== 'string') {
+      errors.content = 'Nội dung phải là chuỗi ký tự';
+    } else if (src.content.trim().length > MAX_CONTENT_LENGTH) {
+      errors.content = `Nội dung tối đa ${MAX_CONTENT_LENGTH} ký tự`;
+    } else {
+      value.content = src.content.trim();
+    }
+  }
+
+  return { errors: Object.keys(errors).length > 0 ? errors : null, value };
+};
+
 module.exports = {
   validatePostPayload,
+  validateTimelinePreviewQuery,
+  validateTimelineShareBody,
   validateListQuery,
   validatePublicListQuery,
   validateObjectIdParam,

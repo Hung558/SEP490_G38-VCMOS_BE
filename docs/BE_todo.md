@@ -12,7 +12,7 @@
 - [x] **Bảng tin cộng đồng công khai (`UC-51`, `SCR-03`, `SCR-14`)**
   - API cho cả `Guest` (không cần đăng nhập) và `PetOwner` xem danh sách & chi tiết các bài viết đã được duyệt (`status: 'Published'`).
   - Hỗ trợ phân trang và lọc theo `postType` (`TimelineShare` / `Discussion`).
-- [ ] **Chia sẻ hành trình tự động ẩn thông tin nhạy cảm (`UC-49`, `BR-18`)**
+- [x] **Chia sẻ hành trình tự động ẩn thông tin nhạy cảm (`UC-49`, `BR-18`)**
   - API xem trước / tạo bài `TimelineShare` từ lịch sử đơn khám đã `Done` của thú cưng.
   - Tự động cắt bỏ toàn bộ nội dung khám SOAP (`S, O, A, P`), đơn thuốc và giá tiền hoá đơn; chỉ giữ ngày mốc, tên dịch vụ và ảnh before/after.
 - [ ] **Thu hồi bài chia sẻ đã đăng (`UC-50`, `SCR-08`, `SCR-14`)**

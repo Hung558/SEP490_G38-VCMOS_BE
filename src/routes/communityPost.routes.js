@@ -15,6 +15,10 @@ router.get('/public/:id', communityPostController.getPublishedById);
 // POST/PUT chỉ nhận multipart/form-data. Upload đặt SAU protect + authorize để người chưa đăng nhập không upload được.
 const petOwnerOnly = [protect, authorize('PetOwner')];
 
+// Chia sẻ hành trình từ lịch sử khám Done (body JSON, không upload). Khai báo TRƯỚC '/:id'.
+router.get('/timeline-share/preview', petOwnerOnly, communityPostController.previewTimelineShare);
+router.post('/timeline-share', petOwnerOnly, communityPostController.createTimelineShare);
+
 router.post('/', petOwnerOnly, uploadCommunityPostPhotos, communityPostController.create);
 router.get('/', petOwnerOnly, communityPostController.list);
 router.get('/:id', petOwnerOnly, communityPostController.getById);

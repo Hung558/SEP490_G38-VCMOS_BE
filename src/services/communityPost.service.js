@@ -1,6 +1,7 @@
 const CommunityPost = require('../models/CommunityPost');
 const Pet = require('../models/Pet');
 const cloudinary = require('../config/cloudinary');
+const { getShareablePetHistory } = require('./petTimeline.service');
 
 // PetOwner chỉ được sửa / xoá bài của chính mình khi còn chờ duyệt.
 // Sau khi Admin/Receptionist xử lý (Published/Hidden/Removed) bài bị khoá, owner không sửa/xoá được nữa.
@@ -188,6 +189,97 @@ const deleteMyPost = async (postId, authorId) => {
   if (!post) await throwNotManageable(postId, authorId);
 };
 
+// ===== Chia sẻ hành trình từ lịch sử khám (tự động ẩn thông tin nhạy cảm) =====
+// Dữ liệu lấy từ getShareablePetHistory (petTimeline.service): hàm nhẹ, đã kiểm tra quyền sở hữu (BR-23)
+// và chỉ select đúng các trường dùng để chia sẻ (ngày đơn, tên dịch vụ Done, ảnh before/after). Nó không đọc
+// MedicalRecord (SOAP, đơn thuốc), Invoice (giá tiền), intake/note của đơn... nên không có gì nhạy cảm để lọt.
+// toShareableMilestone vẫn dựng object MỚI từ đầu (không spread) như một lớp bảo vệ thứ hai.
+const MAX_TIMELINE_ITEMS = 50;
+const MAX_TITLE_LENGTH = 200;
+const FALLBACK_MILESTONE_TITLE = 'Lượt khám tại phòng khám';
+
+const toSafePhotoUrl = (value) =>
+  typeof value === 'string' && /^https?:\/\//i.test(value.trim()) ? value.trim() : undefined;
+
+const truncate = (text, max) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
+
+// Đơn Done (từ getShareablePetHistory) → mốc được phép công khai
+const toShareableMilestone = (order) => {
+  const services = [...new Set((order.services || []).map((svc) => svc.name).filter(Boolean))];
+
+  // Ảnh đại diện: dịch vụ đầu tiên có ảnh (thường là Grooming); ưu tiên ảnh sau, không có thì ảnh trước
+  const imageUrl = (order.services || [])
+    .map((svc) => toSafePhotoUrl(svc.afterPhotoUrl) || toSafePhotoUrl(svc.beforePhotoUrl))
+    .find(Boolean);
+
+  return {
+    orderId: order.orderId,
+    orderCode: order.code,
+    date: order.date,
+    title: truncate(services.join(', ') || FALLBACK_MILESTONE_TITLE, MAX_TITLE_LENGTH),
+    services,
+    imageUrl,
+  };
+};
+
+/**
+ * Dựng các mốc hành trình (đã lọc dữ liệu nhạy cảm) từ các đơn khám Done của thú cưng.
+ * @param {{ id: string, role: string }} currentUser  người gọi API (PetOwner)
+ * @param {string} petId
+ * @param {string[]} [orderIds]  chỉ lấy các đơn này; bỏ trống = tối đa 50 đơn Done gần nhất
+ * @returns {Promise<{ pet: Object, milestones: Object[], totalEligible: number }>} milestones xếp cũ → mới
+ */
+const buildTimelineFromHistory = async (currentUser, petId, orderIds) => {
+  // Ném 404 (không có hồ sơ / đã xóa) hoặc 403 (thú cưng của người khác) theo BR-23
+  const { pet, orders, totalEligible } = await getShareablePetHistory(
+    currentUser,
+    petId,
+    orderIds ? { orderIds } : { limit: MAX_TIMELINE_ITEMS }
+  );
+
+  if (orderIds && orders.length !== orderIds.length) {
+    throw httpError(400, 'Dữ liệu không hợp lệ', {
+      orderIds: 'Có đơn khám không tồn tại, không thuộc thú cưng này hoặc chưa hoàn thành',
+    });
+  }
+
+  return {
+    pet,
+    milestones: [...orders].reverse().map(toShareableMilestone), // timeline đọc từ cũ → mới
+    totalEligible,
+  };
+};
+
+// Xem trước: đúng những gì sẽ được đăng, để chủ nuôi kiểm tra trước khi tạo bài
+const previewTimelineFromHistory = async (currentUser, { petId }) => {
+  const { pet, milestones, totalEligible } = await buildTimelineFromHistory(currentUser, petId);
+  return { pet, milestones, totalEligible, truncated: totalEligible > milestones.length };
+};
+
+// Mốc (đã lọc) → timelineItem lưu trong bài (đúng 3 trường của schema: date, title, imageUrl)
+const toTimelineItem = ({ date, title, imageUrl }) => ({ date, title, imageUrl });
+
+const createTimelineShareFromHistory = async (currentUser, { petId, orderIds, content }) => {
+  const { pet, milestones } = await buildTimelineFromHistory(currentUser, petId, orderIds);
+
+  if (milestones.length === 0) {
+    throw httpError(400, 'Dữ liệu không hợp lệ', {
+      petId: 'Thú cưng chưa có lượt khám nào đã hoàn thành để chia sẻ',
+    });
+  }
+
+  const post = await CommunityPost.create({
+    authorId: currentUser.id,
+    petId: pet._id,
+    postType: 'TimelineShare',
+    content,
+    timelineItems: milestones.map(toTimelineItem),
+    status: MANAGEABLE_STATUS, // luôn PendingReview, chờ Admin/Receptionist duyệt
+  });
+
+  return post.populate(PET_POPULATE);
+};
+
 // ===== Public feed (Guest + PetOwner): chỉ bài đã duyệt =====
 const PUBLISHED_STATUS = 'Published';
 // moderationNote là ghi chú nội bộ của người duyệt → không trả ra ngoài
@@ -236,6 +328,8 @@ const getPublishedPost = async (postId) => {
 };
 
 module.exports = {
+  previewTimelineFromHistory,
+  createTimelineShareFromHistory,
   createPost,
   listMyPosts,
   getMyPost,

@@ -433,6 +433,102 @@ const getPetTimeline = async (currentUser, petId, filters = {}) => {
   };
 };
 
+// Trạng thái đơn được phép chia sẻ lên cộng đồng (UC-49)
+const SHAREABLE_ORDER_STATUS = 'Done';
+
+/**
+ * Lấy nhanh lịch sử khám ĐỦ ĐIỀU KIỆN CHIA SẺ của một thú cưng (UC-49), phục vụ API chia sẻ hành trình.
+ * Khác getPetTimeline: chỉ cần 3 truy vấn nhẹ và chỉ select các trường dùng để chia sẻ,
+ * không đọc bệnh án SOAP, đơn thuốc, hóa đơn, sub-task, nội trú, chuồng, intake/note của đơn.
+ *
+ * - Giữ nguyên kiểm tra quyền riêng tư y tế (BR-23): chủ nuôi chỉ thao tác với thú cưng của mình.
+ *   Chỉ PetOwner được chia sẻ (cùng quy tắc với cờ canShareToCommunity của getPetTimeline).
+ * - Chỉ lấy đơn Done và chỉ các dịch vụ Done của đơn đó.
+ *
+ * @param {{ id: string, role: string }} currentUser
+ * @param {string} petId
+ * @param {Object} [options]
+ * @param {string[]} [options.orderIds] chỉ lấy các đơn này (nếu có)
+ * @param {number} [options.limit] số đơn tối đa (lấy các đơn mới nhất)
+ * @returns {Promise<{
+ *   pet: { _id, code, name, species, photoUrl },
+ *   orders: Array<{ orderId, code, date, services: Array<{ name, beforePhotoUrl, afterPhotoUrl }> }>,
+ *   totalEligible: number
+ * }>} orders xếp mới → cũ; totalEligible = số đơn Done thỏa bộ lọc (trước khi áp dụng limit)
+ */
+const getShareablePetHistory = async (currentUser, petId, { orderIds, limit } = {}) => {
+  // Không populate owner: chỉ cần ownerId để kiểm tra quyền, tránh lấy phone/email
+  const pet = await Pet.findById(petId).select('code name species photoUrl status ownerId').lean();
+  if (!pet) {
+    throw httpError(404, 'Không tìm thấy hồ sơ thú cưng');
+  }
+
+  // BR-23: Chống IDOR — chủ nuôi chỉ được thao tác với thú cưng thuộc sở hữu của mình
+  if (currentUser.role !== 'PetOwner' || String(pet.ownerId) !== String(currentUser.id)) {
+    throw httpError(403, 'Bạn không có quyền xem dòng thời gian của thú cưng này');
+  }
+
+  // Thú cưng đã xóa mềm thì không được chia sẻ
+  if (pet.status !== 'Active') {
+    throw httpError(404, 'Không tìm thấy thú cưng của bạn');
+  }
+
+  const filter = { petId: pet._id, derivedStatus: SHAREABLE_ORDER_STATUS };
+  if (orderIds) filter._id = { $in: orderIds };
+
+  let orderQuery = AppointmentOrder.find(filter)
+    .select('code date') // tuyệt đối không lấy note / intake
+    .sort({ date: -1, createdAt: -1 });
+  if (limit) orderQuery = orderQuery.limit(limit);
+
+  const [orders, totalEligible] = await Promise.all([
+    orderQuery.lean(),
+    AppointmentOrder.countDocuments(filter),
+  ]);
+
+  // Chỉ dịch vụ Done; chỉ tên dịch vụ + 2 ảnh grooming. Không giá, không ghi chú, không nhân sự.
+  const appointmentServices =
+    orders.length > 0
+      ? await AppointmentService.find({
+          orderId: { $in: orders.map((order) => order._id) },
+          status: SHAREABLE_ORDER_STATUS,
+        })
+          .select('orderId sequenceNo serviceId groomingNote.beforePhotoUrl groomingNote.afterPhotoUrl')
+          .populate('serviceId', 'name')
+          .sort({ sequenceNo: 1 })
+          .lean()
+      : [];
+
+  const servicesByOrderId = new Map();
+  for (const svc of appointmentServices) {
+    const key = String(svc.orderId);
+    if (!servicesByOrderId.has(key)) servicesByOrderId.set(key, []);
+    servicesByOrderId.get(key).push({
+      name: svc.serviceId?.name || null,
+      beforePhotoUrl: svc.groomingNote?.beforePhotoUrl || null,
+      afterPhotoUrl: svc.groomingNote?.afterPhotoUrl || null,
+    });
+  }
+
+  return {
+    pet: {
+      _id: pet._id,
+      code: pet.code,
+      name: pet.name,
+      species: pet.species || null,
+      photoUrl: pet.photoUrl || null,
+    },
+    orders: orders.map((order) => ({
+      orderId: order._id,
+      code: order.code,
+      date: order.date,
+      services: servicesByOrderId.get(String(order._id)) || [],
+    })),
+    totalEligible,
+  };
+};
+
 module.exports = {
   getPetTimeline,
+  getShareablePetHistory,
 };
