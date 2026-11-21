@@ -45,7 +45,7 @@ const previewTimelineShare = async (req, res, next) => {
     const { errors, value } = validateTimelinePreviewQuery(req.query);
     if (errors) return sendValidationError(res, errors);
 
-    const result = await communityPostService.previewTimelineFromHistory(req.user.id, value);
+    const result = await communityPostService.previewTimelineFromHistory(req.user, value);
     return res.status(200).json(result);
   } catch (err) {
     return next(err);
@@ -58,7 +58,7 @@ const createTimelineShare = async (req, res, next) => {
     const { errors, value } = validateTimelineShareBody(req.body);
     if (errors) return sendValidationError(res, errors);
 
-    const post = await communityPostService.createTimelineShareFromHistory(req.user.id, value);
+    const post = await communityPostService.createTimelineShareFromHistory(req.user, value);
     return res.status(201).json({
       message: 'Đã gửi bài chia sẻ hành trình, vui lòng chờ duyệt',
       post,
