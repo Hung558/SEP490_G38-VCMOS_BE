@@ -15,27 +15,25 @@
 - [x] **Chia sẻ hành trình tự động ẩn thông tin nhạy cảm (`UC-49`, `BR-18`)**
   - API xem trước / tạo bài `TimelineShare` từ lịch sử đơn khám đã `Done` của thú cưng.
   - Tự động cắt bỏ toàn bộ nội dung khám SOAP (`S, O, A, P`), đơn thuốc và giá tiền hoá đơn; chỉ giữ ngày mốc, tên dịch vụ và ảnh before/after.
-- [ ] **Thu hồi bài chia sẻ đã đăng (`UC-50`, `SCR-08`, `SCR-14`)**
-  - Cho phép `PetOwner` gỡ (`Withdraw Share` → chuyển sang `Removed`) bài chia sẻ của mình kể cả khi bài đã ở trạng thái `Published`.
-- [ ] **Thả tim / Bỏ thích bài viết (`UC-53`, `BR-19`)**
-  - Dùng model `PostLike`: mỗi user thích tối đa 1 lần/bài (unique index `(postId, userId)`), tự đồng bộ `likeCount` trên `CommunityPost`.
-- [ ] **Bình luận & Trả lời bình luận 1 cấp (`UC-54`, `UC-55`, `BR-19`)**
-  - Dùng model `PostComment`: xem bình luận của bài `Published`, tạo bình luận gốc (`parentCommentId: null`), trả lời bình luận gốc (**chặn lồng quá 1 cấp**), tác giả tự xoá mềm bình luận (`status: 'Deleted'`), tự đồng bộ `commentCount`.
-- [ ] **Báo cáo vi phạm bài viết / bình luận (`UC-56`)**
-  - Dùng model `ContentReport`: `PetOwner` báo cáo bài viết hoặc bình luận (`targetType: 'Post' | 'Comment'`, `targetId`, `reason`), mỗi user báo cáo tối đa 1 lần trên cùng 1 nội dung.
+- [x] **Thu hồi bài chia sẻ đã đăng (`UC-50`, `SCR-08`, `SCR-14`)**
+  - `PATCH /api/community-posts/:id/withdraw`: cho phép `PetOwner` gỡ (`Removed`) bài viết/chia sẻ của mình kể cả khi đã `Published`.
+- [x] **Thả tim / Bỏ thích bài viết (`UC-53`, `BR-19`)**
+  - `POST /api/community-posts/:id/like` & `GET /:id/like-status`: dùng model `PostLike` (unique index `(postId, userId)`), tự đồng bộ `likeCount`.
+- [x] **Bình luận & Trả lời bình luận 1 cấp (`UC-54`, `UC-55`, `BR-19`)**
+  - `GET/POST /api/community-posts/:id/comments` & `DELETE /comments/:commentId`: xem công khai, bình luận gốc + reply 1 cấp (chặn lồng cấp 2), tác giả tự xoá mềm, tự đồng bộ `commentCount`.
+- [x] **Báo cáo vi phạm bài viết / bình luận (`UC-56`)**
+  - `POST /api/community-posts/reports`: dùng model `ContentReport`, chặn tự báo cáo và chặn trùng báo cáo (`409`).
 
 ---
 
 ## 2. Admin Kiểm duyệt Cộng đồng (`T-53` — `PB-20`, `SCR-33`)
-- [ ] **Hàng đợi bài viết chờ duyệt (`UC-57`)**
-  - API cho `Admin` xem danh sách bài `PendingReview` (gợi ý / đánh dấu nếu phát hiện từ khoá nhạy cảm về y tế hoặc giá cả).
-- [ ] **Duyệt / Từ chối bài viết (`UC-58`)**
-  - `Approve`: chuyển `status` sang `'Published'`.
-  - `Reject`: chuyển `status` sang `'Hidden'`, **bắt buộc nhập lý do** `moderationNote` (`MSG22`).
-- [ ] **Xử lý báo cáo vi phạm (`UC-59`)**
-  - API cho `Admin` xem danh sách `ContentReport` đang `Pending` (kèm ngữ cảnh bài viết / bình luận và số lượt báo cáo).
-  - Xử lý quyết định: **Giữ lại (`Keep`)**, **Ẩn (`Hide`)**, hoặc **Xoá (`Delete` → `Removed`)** — bắt buộc nhập ghi chú khi Ẩn/Xoá (`MSG22`).
-  - Đổi toàn bộ báo cáo của nội dung đó sang `Resolved` và lưu `resolvedById`.
+- [x] **Hàng đợi bài viết chờ duyệt (`UC-57`)**
+  - `GET /api/admin/community/posts`: lọc theo trạng thái (`PendingReview` mặc định) kèm cờ phát hiện từ khoá y tế / giá tiền (`hasSensitiveKeywords`, `sensitiveMatches`).
+- [x] **Duyệt / Từ chối bài viết (`UC-58`)**
+  - `PATCH /api/admin/community/posts/:id/moderate`: `Approve -> Published`, `Reject -> Hidden` bắt buộc nhập lý do `moderationNote` (`MSG22`).
+- [x] **Xử lý báo cáo vi phạm (`UC-59`)**
+  - `GET /api/admin/community/reports` & `PATCH /reports/:id/resolve`: xem ngữ cảnh bài/bình luận + số lượt báo cáo; xử lý `Keep` / `Hide` / `Delete` (bắt buộc `note` khi Ẩn/Xoá) và đóng toàn bộ báo cáo `Pending` của nội dung đó sang `Resolved`.
+  - Đã có file test `tests/communityPost.test.js` và tài liệu `api/community-posts/interactions.md`, `api/admin/community-moderation.md`.
 
 ---
 

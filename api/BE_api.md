@@ -23,6 +23,7 @@
 12. [Lịch Báo Bận 3 Ca Theo Cơ Chế Blacklist (`Staff Schedules` — `/api/staff-schedules`)](#12--lịch-báo-bận-3-ca-theo-cơ-chế-blacklist-staff-schedules--apistaff-schedules)
 13. [Hóa Đơn Tổng Hợp & Thanh Toán Tiền Mặt / VNPay (`Invoices` — `/api/invoices`)](#13--hóa-đơn-tổng-hợp--thanh-toán-tiền-mặt--vnpay-invoices--apiinvoices)
 14. [Thống Kê & Báo Cáo Dashboard (`Reports` — `/api/reports`)](#14--thống-kê--báo-cáo-dashboard-reports--apireports)
+15. [Cộng Đồng & Kiểm Duyệt Nội Dung (`Community` — `/api/community-posts` & `/api/admin/community`)](#15--cộng-đồng--kiểm-duyệt-nội-dung-community--apicommunity-posts--apiadmincommunity)
 
 ---
 
@@ -1060,6 +1061,31 @@
 | `GET` | `http://localhost:9999/api/reports/operations?period=month&from=&to=` | 🔒 `Admin` | Thống kê vận hành (`UC-64`, `SCR-28`): đơn hẹn theo 7 trạng thái, tỷ lệ Online vs Walk-in, lượt dịch vụ theo danh mục, Top 5 dịch vụ nổi bật, công suất chuồng (`Holding`/`InpatientWard`), tổng quan khách hàng/thú cưng/tồn kho |
 | `GET` | `http://localhost:9999/api/reports/front-desk?period=day&from=&to=` | 🔒 `Receptionist`, `Admin` | Widget thống kê nhanh tại quầy Lễ tân (`SCR-16`): bộ đếm trực tiếp hôm nay, đơn theo trạng thái, thời gian chờ trung bình (phút), tổng hoá đơn & số tiền thu theo phương thức |
 | `GET` | `http://localhost:9999/api/invoices/reports/best-selling-products?from=&to=&category=&sortBy=quantity&limit=10` | 🔒 `Admin` | Top sản phẩm / thuốc bán chạy (`UC-65`, `SCR-28`) |
+
+---
+
+## 15. 💬 Cộng Đồng & Kiểm Duyệt Nội Dung (`Community` — `/api/community-posts` & `/api/admin/community`)
+*(Tài liệu chi tiết cho FE nằm trong `api/community-posts/` và `api/admin/community-moderation.md`)*
+
+| Method | Endpoint | Quyền | Mô tả nhanh |
+| :--- | :--- | :--- | :--- |
+| `GET` | `http://localhost:9999/api/community-posts/public?page=1&limit=10&postType=` | 🌐 Công khai | Bảng tin cộng đồng các bài đã duyệt `Published` (`UC-51`, `SCR-03`) |
+| `GET` | `http://localhost:9999/api/community-posts/public/:id` | 🌐 Công khai | Xem chi tiết 1 bài viết `Published` |
+| `GET` | `http://localhost:9999/api/community-posts/:id/comments?page=1&limit=20` | 🌐 Công khai | Xem danh sách bình luận gốc kèm `replies` cấp 1 của bài `Published` |
+| `GET` | `http://localhost:9999/api/community-posts/timeline-share/preview?petId=...` | 🔒 `PetOwner` | Xem trước mốc hành trình đã cắt bỏ SOAP / đơn thuốc / giá tiền (`UC-49`, `BR-18`) |
+| `POST` | `http://localhost:9999/api/community-posts/timeline-share` | 🔒 `PetOwner` | Tạo bài chia sẻ hành trình từ lịch sử đơn `Done` (`PendingReview`) |
+| `POST/GET/PUT/DELETE` | `http://localhost:9999/api/community-posts` & `/:id` | 🔒 `PetOwner` | Quản lý bài viết cá nhân (`POST`/`PUT` dùng `multipart/form-data`, sửa/xoá khi còn `PendingReview`) |
+| `PATCH` | `http://localhost:9999/api/community-posts/:id/withdraw` | 🔒 `PetOwner` | Thu hồi bài chia sẻ / bài viết của chính mình kể cả khi đã `Published` (`UC-50`) |
+| `POST` | `http://localhost:9999/api/community-posts/:id/like` | 🔒 `PetOwner` | Toggle thả tim / bỏ thích bài `Published` (`UC-53`, `BR-19`) |
+| `GET` | `http://localhost:9999/api/community-posts/:id/like-status` | 🔒 `PetOwner` | Kiểm tra user hiện tại đã thích bài viết này chưa |
+| `POST` | `http://localhost:9999/api/community-posts/:id/comments` | 🔒 `PetOwner` | Gửi bình luận hoặc trả lời 1 cấp (`parentCommentId`, chặn lồng cấp 2 theo `BR-19`) |
+| `DELETE` | `http://localhost:9999/api/community-posts/comments/:commentId` | 🔒 `PetOwner` | Tác giả tự xoá mềm bình luận của chính mình |
+| `POST` | `http://localhost:9999/api/community-posts/reports` | 🔒 `PetOwner` | Báo cáo vi phạm bài viết hoặc bình luận (`UC-56`) |
+| `GET` | `http://localhost:9999/api/admin/community/posts?status=PendingReview` | 🔒 `Admin` | Hàng đợi kiểm duyệt bài viết kèm cảnh báo từ khóa nhạy cảm (`UC-57`, `SCR-33`) |
+| `PATCH` | `http://localhost:9999/api/admin/community/posts/:id/moderate` | 🔒 `Admin` | Duyệt (`Approve -> Published`) hoặc Từ chối (`Reject -> Hidden`, bắt buộc `moderationNote` — `UC-58`) |
+| `GET` | `http://localhost:9999/api/admin/community/reports?status=Pending` | 🔒 `Admin` | Hàng đợi báo cáo vi phạm kèm ngữ cảnh bài/bình luận & `reportCount` (`UC-59`, `SCR-33`) |
+| `PATCH` | `http://localhost:9999/api/admin/community/reports/:id/resolve` | 🔒 `Admin` | Xử lý báo cáo (`Keep` / `Hide` / `Delete`, bắt buộc `note` khi Ẩn/Xoá — `UC-59`) |
+
 
 
 
