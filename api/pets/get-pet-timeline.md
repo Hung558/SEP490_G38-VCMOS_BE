@@ -7,7 +7,7 @@ Returns the unified chronological care timeline of a single pet (newest first), 
 | **Method** | `GET` |
 | **URL** | `http://localhost:9999/api/pets/:petId/timeline` |
 | **Auth** | Required: `Authorization: Bearer <token>` |
-| **Access Control (`BR-23`)** | `PetOwner`: own pets only (`403` otherwise). Clinic staff (`Receptionist`, `Veterinarian`, `Groomer`, `Admin`): any pet. Financial `invoice` fields are visible only to `PetOwner`, `Receptionist`, `Admin` (`null` for `Veterinarian` and `Groomer`). |
+| **Access Control (`BR-23`)** | `PetOwner`: own pets only (`403` otherwise). Clinic staff (`Receptionist`, `Veterinarian`, `Groomer`, `Admin`): any pet. Financial `invoice` fields are visible only to `PetOwner`, `Receptionist`, `Admin` (`null` for `Veterinarian` and `Groomer`). `aiAssessments` is visible **only to `PetOwner`** (`[]` for all other roles). |
 
 ---
 
@@ -90,6 +90,7 @@ Returns the unified chronological care timeline of a single pet (newest first), 
     "invoice": null
   },
   "sharedPosts": [],
+  "aiAssessments": [],
   "timeline": [
     {
       "id": "6ad96d4a9664da6b2c0d8e20",
