@@ -59,10 +59,11 @@
 ---
 
 ## 5. Trợ lý AI Gemini Đánh giá Sức khỏe Tham khảo (`T-46` — `PB-18`, `UC-14`, `API-01`, `SCR-10`)
-- [ ] **Tích hợp Google Gemini API (`BR-20`)** *(xác nhận với BA xem có cần tạo thêm model lưu lịch sử đánh giá AI hay không)*
-  - Nhận tối đa 3 ảnh thú cưng (`JPG`/`PNG` ≤ 5MB) + chỉ số hồ sơ (loài, tuổi, cân nặng) + triệu chứng.
-  - Gọi Gemini API với timeout `<= 30s`, chuẩn hoá JSON trả về: `urgency` (`Routine` | `Monitor` | `Urgent`), `possibleCauses`, `advice`, kèm nội dung miễn trừ trách nhiệm (`MSG33`).
-  - Tuyệt đối không ghi đè vào bảng `MedicalRecord` (`BR-20`).
+- [x] **Tích hợp Google Gemini & Groq API (`BR-20`)** (`/api/ai-assessments`)
+  - Tạo model riêng `AiAssessment` (`ai_assessments`) lưu lịch sử đánh giá tách biệt hoàn toàn với `MedicalRecord` (`BR-20`), chỉ dành riêng cho `PetOwner` sở hữu thú cưng (chặn mọi vai trò khác trên `/api/ai-assessments` và ẩn `aiAssessments` trên `GET /api/pets/:petId/timeline` với các vai trò khác).
+  - Hỗ trợ `0–3` ảnh thú cưng (`JPG`/`PNG` ≤ 5MB, upload Cloudinary sau khi AI thành công) + triệu chứng chọn sẵn hoặc tự viết + tự động nạp ngữ cảnh hồ sơ thú cưng, bệnh án SOAP, cận lâm sàng, nội trú & danh mục dịch vụ `Active` của phòng khám.
+  - Luân chuyển tự động đa cổng `Gemini <-> Groq` (hỗ trợ nhiều API key) với timeout `<= 30s`, chuẩn hóa JSON theo chuẩn phân tầng thú y AAHA/AVMA (`urgency`, `recommendedTimeframe`, `summary`, `redFlags`, `visualFindings`, `possibleCauses`, `advice`, `contraindications`, `recommendedServices`, `bookingNoteDraft`, `disclaimer` `MSG33`).
+  - Đã có file test `tests/aiAssessment.test.js` và tài liệu `api/ai-assessments/ai-assessments.md`.
 
 ---
 

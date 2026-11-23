@@ -2,10 +2,11 @@ const multer = require('multer');
 
 const MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB mỗi ảnh
 const ALLOWED_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const ALLOWED_AI_IMAGE_MIME_TYPES = ['image/jpeg', 'image/png'];
 
-const imageFileFilter = (req, file, cb) => {
-  if (!ALLOWED_IMAGE_MIME_TYPES.includes(file.mimetype)) {
-    const err = new Error('Ảnh phải có định dạng JPEG, PNG hoặc WebP');
+const createImageFileFilter = (allowedMimeTypes, invalidMessage) => (req, file, cb) => {
+  if (!allowedMimeTypes.includes(file.mimetype)) {
+    const err = new Error(invalidMessage);
     err.statusCode = 400;
     return cb(err);
   }
@@ -13,11 +14,15 @@ const imageFileFilter = (req, file, cb) => {
 };
 
 // Lưu ảnh trong bộ nhớ (buffer) rồi đẩy thẳng lên Cloudinary, không ghi ra đĩa
-const createImageUpload = (maxFiles) =>
+const createImageUpload = (
+  maxFiles,
+  allowedMimeTypes = ALLOWED_IMAGE_MIME_TYPES,
+  invalidMessage = 'Ảnh phải có định dạng JPEG, PNG hoặc WebP'
+) =>
   multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_IMAGE_SIZE_BYTES, files: maxFiles },
-    fileFilter: imageFileFilter,
+    fileFilter: createImageFileFilter(allowedMimeTypes, invalidMessage),
   });
 
 const upload = createImageUpload(2);
@@ -35,6 +40,18 @@ const communityPostUpload = createImageUpload(1 + MAX_TIMELINE_IMAGES);
 const communityPostPhotos = communityPostUpload.fields([
   { name: 'image', maxCount: 1 },
   { name: 'timelineImages', maxCount: MAX_TIMELINE_IMAGES },
+]);
+
+// Đánh giá sức khỏe AI (UC-14 / MSG35): tối đa 3 ảnh JPG/PNG, mỗi ảnh <= 5MB
+const MAX_AI_ASSESSMENT_PHOTOS = 3;
+const aiAssessmentUpload = createImageUpload(
+  MAX_AI_ASSESSMENT_PHOTOS,
+  ALLOWED_AI_IMAGE_MIME_TYPES,
+  'Chỉ chấp nhận ảnh định dạng JPG hoặc PNG (MSG35)'
+);
+const aiAssessmentPhotos = aiAssessmentUpload.fields([
+  { name: 'photos', maxCount: MAX_AI_ASSESSMENT_PHOTOS },
+  { name: 'photo', maxCount: MAX_AI_ASSESSMENT_PHOTOS },
 ]);
 
 /**
@@ -102,9 +119,38 @@ const uploadCommunityPostPhotos = (req, res, next) => {
   return handleCommunityPostPhotos(req, res, next);
 };
 
+const handleAiAssessmentPhotos = createUploadErrorHandler(
+  aiAssessmentPhotos,
+  `Chỉ được tải lên tối đa ${MAX_AI_ASSESSMENT_PHOTOS} ảnh qua trường photos (hoặc photo)`,
+  MAX_AI_ASSESSMENT_PHOTOS
+);
+
+/**
+ * Nhận tối đa 3 ảnh JPG/PNG cho đánh giá AI qua trường `photos` hoặc `photo`.
+ * Cho phép gửi cả `application/json` (0 ảnh) lẫn `multipart/form-data` (0..3 ảnh).
+ */
+const uploadAiAssessmentPhotos = (req, res, next) => {
+  if (!req.is('multipart/form-data')) {
+    return next();
+  }
+  return handleAiAssessmentPhotos(req, res, (err) => {
+    if (err) return next(err);
+    const totalCount =
+      (req.files?.photos?.length || 0) + (req.files?.photo?.length || 0);
+    if (totalCount > MAX_AI_ASSESSMENT_PHOTOS) {
+      return res.status(400).json({
+        message: `Chỉ được tải lên tối đa ${MAX_AI_ASSESSMENT_PHOTOS} ảnh (MSG35)`,
+      });
+    }
+    return next();
+  });
+};
+
 module.exports = {
   uploadGroomingNotePhotos,
   uploadSubtaskResultPhoto,
   uploadCommunityPostPhotos,
+  uploadAiAssessmentPhotos,
   MAX_TIMELINE_IMAGES,
+  MAX_AI_ASSESSMENT_PHOTOS,
 };

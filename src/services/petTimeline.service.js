@@ -7,6 +7,7 @@ const InpatientRecord = require('../models/InpatientRecord');
 const CageAssignment = require('../models/CageAssignment');
 const Invoice = require('../models/Invoice');
 const CommunityPost = require('../models/CommunityPost');
+const AiAssessment = require('../models/AiAssessment');
 
 // Các trạng thái đơn đang hoạt động (chưa hoàn tất / chưa hủy / chưa quá hạn)
 const ACTIVE_ORDER_STATUSES = ['Booked', 'CheckedIn', 'InProgress', 'WaitOwner'];
@@ -153,8 +154,9 @@ const getPetTimeline = async (currentUser, petId, filters = {}) => {
 
   const canViewInvoice = INVOICE_VIEWER_ROLES.includes(currentUser.role);
 
-  // 1. Lấy song song toàn bộ đơn hẹn, hồ sơ nội trú và bài chia sẻ cộng đồng của thú cưng
-  const [orders, inpatientRecords, sharedPosts] = await Promise.all([
+  // 1. Lấy song song toàn bộ đơn hẹn, hồ sơ nội trú, bài chia sẻ cộng đồng và đánh giá AI (chỉ PetOwner sở hữu mới thấy)
+  const canViewAiAssessments = currentUser.role === 'PetOwner';
+  const [orders, inpatientRecords, sharedPosts, aiAssessments] = await Promise.all([
     AppointmentOrder.find({ petId })
       .sort({ date: -1, createdAt: -1 })
       .lean(),
@@ -172,6 +174,14 @@ const getPetTimeline = async (currentUser, petId, filters = {}) => {
       .select('status content imageUrl timelineItems likeCount commentCount createdAt updatedAt')
       .sort({ createdAt: -1 })
       .lean(),
+    canViewAiAssessments
+      ? AiAssessment.find({ petId })
+          .select(
+            'symptoms description imageUrls urgency recommendedTimeframe summary redFlags visualFindings possibleCauses advice contraindications recommendedServices bookingNoteDraft disclaimer aiProvider aiModel responseTimeMs createdAt'
+          )
+          .sort({ createdAt: -1 })
+          .lean()
+      : Promise.resolve([]),
   ]);
 
   const orderIds = orders.map((order) => order._id);
@@ -423,6 +433,7 @@ const getPetTimeline = async (currentUser, petId, filters = {}) => {
     },
     activeInpatient,
     sharedPosts,
+    aiAssessments,
     timeline: paginatedTimeline,
     pagination: {
       page,

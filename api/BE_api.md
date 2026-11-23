@@ -24,6 +24,7 @@
 13. [Hóa Đơn Tổng Hợp & Thanh Toán Tiền Mặt / VNPay (`Invoices` — `/api/invoices`)](#13--hóa-đơn-tổng-hợp--thanh-toán-tiền-mặt--vnpay-invoices--apiinvoices)
 14. [Thống Kê & Báo Cáo Dashboard (`Reports` — `/api/reports`)](#14--thống-kê--báo-cáo-dashboard-reports--apireports)
 15. [Cộng Đồng & Kiểm Duyệt Nội Dung (`Community` — `/api/community-posts` & `/api/admin/community`)](#15--cộng-đồng--kiểm-duyệt-nội-dung-community--apicommunity-posts--apiadmincommunity)
+16. [Trợ Lý AI Đánh Giá Sức Khỏe Tham Khảo (`AI Assessments` — `/api/ai-assessments`)](#16--trợ-lý-ai-đánh-giá-sức-khỏe-tham-khảo-ai-assessments--apiai-assessments)
 
 ---
 
@@ -1085,6 +1086,17 @@
 | `PATCH` | `http://localhost:9999/api/admin/community/posts/:id/moderate` | 🔒 `Admin` | Duyệt (`Approve -> Published`) hoặc Từ chối (`Reject -> Hidden`, bắt buộc `moderationNote` — `UC-58`) |
 | `GET` | `http://localhost:9999/api/admin/community/reports?status=Pending` | 🔒 `Admin` | Hàng đợi báo cáo vi phạm kèm ngữ cảnh bài/bình luận & `reportCount` (`UC-59`, `SCR-33`) |
 | `PATCH` | `http://localhost:9999/api/admin/community/reports/:id/resolve` | 🔒 `Admin` | Xử lý báo cáo (`Keep` / `Hide` / `Delete`, bắt buộc `note` khi Ẩn/Xoá — `UC-59`) |
+
+---
+
+## 16. 🤖 Trợ Lý AI Đánh Giá Sức Khỏe Tham Khảo (`AI Assessments` — `/api/ai-assessments`)
+*(Tài liệu chi tiết cho FE nằm trong `api/ai-assessments/ai-assessments.md`)*
+
+| Method | Endpoint | Quyền | Mô tả nhanh |
+| :--- | :--- | :--- | :--- |
+| `POST` | `http://localhost:9999/api/ai-assessments` | 🔒 `PetOwner` (chủ thú cưng) | Gửi `petId`, `description` (10–1000 ký tự), `symptoms` (chọn sẵn hoặc tự nhập) và `0–3` ảnh JPG/PNG (`<= 5MB`). Tự động nạp ngữ cảnh bệnh án SOAP / dị ứng / dịch vụ `Active` của VCMOS; luân chuyển tự động `Gemini <-> Groq` (`<= 30s`); trả kết quả chuẩn AAHA/AVMA kèm `MSG33` và tách biệt hoàn toàn `MedicalRecord` (`BR-20`) |
+| `GET` | `http://localhost:9999/api/ai-assessments?petId=&urgency=&page=1&limit=20` | 🔒 Chỉ `PetOwner` (thú cưng của mình) | Xem lịch sử đánh giá AI của thú cưng (chặn mọi vai trò khác `403`) |
+| `GET` | `http://localhost:9999/api/ai-assessments/:id` | 🔒 Chỉ `PetOwner` (thú cưng của mình) | Xem chi tiết 1 bản ghi đánh giá AI (chặn mọi vai trò khác `403`) |
 
 
 
