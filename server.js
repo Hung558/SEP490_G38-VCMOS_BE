@@ -23,6 +23,7 @@ const invoiceRoutes = require('./src/routes/invoice.routes');
 const communityPostRoutes = require('./src/routes/communityPost.routes');
 const communityModerationRoutes = require('./src/routes/communityModeration.routes');
 const reportRoutes = require('./src/routes/report.routes');
+const aiAssessmentRoutes = require('./src/routes/aiAssessment.routes');
 
 const app = express();
 
@@ -53,6 +54,7 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/community-posts', communityPostRoutes);
 app.use('/api/admin/community', communityModerationRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/ai-assessments', aiAssessmentRoutes);
 
 // Global Error Middleware: mọi lỗi đẩy qua next(err) đều trả về JSON thống nhất kèm message tiếng Việt
 app.use((err, req, res, next) => {
