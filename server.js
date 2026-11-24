@@ -24,6 +24,7 @@ const communityPostRoutes = require('./src/routes/communityPost.routes');
 const communityModerationRoutes = require('./src/routes/communityModeration.routes');
 const reportRoutes = require('./src/routes/report.routes');
 const aiAssessmentRoutes = require('./src/routes/aiAssessment.routes');
+const { startBackgroundJobs } = require('./src/jobs');
 
 const app = express();
 
@@ -68,9 +69,11 @@ app.use((err, req, res, next) => {
     return res.status(statusCode).json(response);
 });
 
-// Chỉ kết nối DB + mở port khi chạy trực tiếp (npm start); test sẽ require app mà không listen
+// Chỉ kết nối DB, khởi chạy background jobs + mở port khi chạy trực tiếp (npm start); test sẽ require app mà không listen
 if (require.main === module) {
-    connectDB();
+    connectDB().then(() => {
+        startBackgroundJobs();
+    });
     const PORT = process.env.PORT || 9999;
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 }

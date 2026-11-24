@@ -1,5 +1,10 @@
 const appointmentService = require('../services/appointmentOrder.service');
 const {
+  flagOverdueAppointments,
+  getDateStringVN,
+  isValidDateString,
+} = require('../jobs/flagOverdueAppointments.job');
+const {
   validateCreateOnlineAppointment,
   validateListOnlineAppointments,
   validateListAllAppointments,
@@ -112,6 +117,30 @@ const cancelBooking = async (req, res) => {
   }
 };
 
+// Admin kích hoạt thủ công JOB-01 đánh dấu lịch hẹn quá hạn Overdue (phục vụ vận hành / kiểm thử / demo)
+const triggerFlagOverdue = async (req, res) => {
+  const body = req.body || {};
+  const targetDate = body.date !== undefined ? String(body.date).trim() : getDateStringVN();
+  const includePastDates = body.includePastDates === undefined ? true : Boolean(body.includePastDates);
+
+  if (!isValidDateString(targetDate)) {
+    return res.status(400).json({
+      message: 'Ngày mục tiêu (date) phải có định dạng YYYY-MM-DD hợp lệ',
+      errors: { date: 'Ngày mục tiêu (date) phải có định dạng YYYY-MM-DD hợp lệ' },
+    });
+  }
+
+  try {
+    const result = await flagOverdueAppointments({ targetDate, includePastDates });
+    return res.status(200).json({
+      message: 'Đã chạy tiến trình đánh dấu lịch hẹn quá hạn (JOB-01)',
+      data: result,
+    });
+  } catch (err) {
+    return handleError(res, err);
+  }
+};
+
 module.exports = {
   createOnlineBooking,
   listMyOnlineBooking,
@@ -119,4 +148,5 @@ module.exports = {
   listAllBooking,
   checkInBooking,
   cancelBooking,
+  triggerFlagOverdue,
 };
