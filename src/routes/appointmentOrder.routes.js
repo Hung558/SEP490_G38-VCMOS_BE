@@ -19,6 +19,9 @@ router.get('/me/:id', authorize('PetOwner'), controller.getMyOnlineBookingById);
 // Admin / Receptionist routes
 router.get('/', authorize('Admin', 'Receptionist'), controller.listAllBooking);
 
+// Admin kích hoạt thủ công JOB-01 đánh dấu quá hạn Overdue (UC-23, BR-08)
+router.post('/flag-overdue', authorize('Admin'), controller.triggerFlagOverdue);
+
 // Receptionist routes
 router.patch('/:id/check-in', authorize('Receptionist'), controller.checkInBooking);
 

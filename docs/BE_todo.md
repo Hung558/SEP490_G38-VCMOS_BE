@@ -68,10 +68,11 @@
 ---
 
 ## 6. Tiến trình ngầm (Background Jobs) & Thông báo (`T-28`, `T-52` — `PB-16`, `PB-21`)
-> *Thư mục hiện đang trống:* `src/jobs/`
 
-- [ ] **`JOB-01` — Đánh dấu lịch hẹn quá hạn `Overdue` (`UC-23`, `BR-08`)**
-  - Chạy cuối ngày lúc `23:59`: tìm các đơn `Booked` của ngày hôm đó chưa `CheckedIn`, chuyển dịch vụ đầu tiên và trạng thái đơn sang `Overdue` (không huỷ đơn).
+- [x] **`JOB-01` — Đánh dấu lịch hẹn quá hạn `Overdue` (`UC-23`, `BR-08`)** (`src/jobs/flagOverdueAppointments.job.js`)
+  - Tự động chạy cuối ngày lúc `23:59` (`Asia/Ho_Chi_Minh`) + quét bù các ngày trước đó (`< hôm nay`) khi server khởi động; hỗ trợ retry tối đa 3 lần cách nhau 30s khi DB gián đoạn (`SRS 6.1`).
+  - Tìm các đơn `Booked` chưa `CheckedIn` (`checkedInAt: null`), cập nhật atomic tránh đụng độ Check-in, chuyển **chỉ dịch vụ đầu tiên** (`sequenceNo` nhỏ nhất) và trạng thái đơn sang `Overdue` (không huỷ đơn).
+  - Có API chạy tay cho Admin `POST /api/appointment-orders/flag-overdue` và test suite `tests/flagOverdueJob.test.js`.
 - [ ] **`JOB-02` & Thông báo tự động (`UC-69`, `UC-70`, `UC-71`)**
   - Chạy mỗi 15 phút: nhắc lịch hẹn trước giờ hẹn 2 tiếng (In-app + gửi Email SMTP với tài khoản đã xác thực email, retry tối đa 3 lần khi SMTP lỗi).
   - Gửi thông báo khi có thay đổi trạng thái quan trọng (khách huỷ lịch → báo Lễ tân; xong hết dịch vụ chuyển `WaitOwner` → báo Chủ nuôi đón thú cưng; chỉ định/trả kết quả Sub-task; kết quả kiểm duyệt cộng đồng).

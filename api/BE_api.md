@@ -1098,6 +1098,15 @@
 | `GET` | `http://localhost:9999/api/ai-assessments?petId=&urgency=&page=1&limit=20` | 🔒 Chỉ `PetOwner` (thú cưng của mình) | Xem lịch sử đánh giá AI của thú cưng (chặn mọi vai trò khác `403`) |
 | `GET` | `http://localhost:9999/api/ai-assessments/:id` | 🔒 Chỉ `PetOwner` (thú cưng của mình) | Xem chi tiết 1 bản ghi đánh giá AI (chặn mọi vai trò khác `403`) |
 
+---
+
+## 17. ⏰ Tiến Trình Ngầm (`Background Jobs` — `src/jobs/`)
+
+| Job / Endpoint | Lịch chạy / Quyền | Mô tả nhanh |
+| :--- | :--- | :--- |
+| **`JOB-01`** (`src/jobs/flagOverdueAppointments.job.js`) | Tự động `23:59` hằng ngày (`Asia/Ho_Chi_Minh`) + quét bù ngày cũ khi server khởi động | Đánh dấu quá hạn `Overdue` cho các đơn `Booked` chưa `CheckedIn` (`UC-23`, `BR-08`): chuyển đơn và **chỉ dịch vụ đầu tiên** sang `Overdue` (không huỷ đơn), có retry 3 lần khi DB lỗi (`SRS 6.1`) |
+| `POST http://localhost:9999/api/appointment-orders/flag-overdue` | 🔒 Chỉ `Admin` | Kích hoạt thủ công `JOB-01` (Body tùy chọn: `{ "date": "YYYY-MM-DD", "includePastDates": true }`, mặc định ngày hôm nay giờ VN) để kiểm thử / demo ngay không cần đợi tới `23:59` |
+
 
 
 
