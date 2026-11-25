@@ -125,10 +125,15 @@ const createBusySchedule = async ({ currentUser, staffId, date, shift, reason })
     });
   } catch (err) {
     if (err.code === 11000) {
-      throw createError(
-        409,
-        `Nhân sự "${targetStaff.fullName}" đã có lịch báo bận ${SHIFT_LABELS[shift] || shift} ngày ${date}`
-      );
+      // Chỉ báo trùng lịch (409) khi đúng là trùng khóa (staffId, date, shift); tránh che giấu lỗi index thừa khác
+      const isScheduleKey =
+        !err.keyPattern || (err.keyPattern.staffId && err.keyPattern.date && err.keyPattern.shift);
+      if (isScheduleKey) {
+        throw createError(
+          409,
+          `Nhân sự "${targetStaff.fullName}" đã có lịch báo bận ${SHIFT_LABELS[shift] || shift} ngày ${date}`
+        );
+      }
     }
     throw err;
   }
