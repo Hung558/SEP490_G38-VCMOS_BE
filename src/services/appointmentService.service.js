@@ -9,8 +9,8 @@ const cloudinary = require('../config/cloudinary');
 const CANCELLATION_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 giờ trước giờ hẹn (BR-07)
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const CLINIC_OPEN_TIME = '08:00';
-const CLINIC_CLOSE_TIME = '18:00';
-const CLINIC_CLOSE_MINUTES = 18 * 60;
+const CLINIC_CLOSE_TIME = '21:00';
+const CLINIC_CLOSE_MINUTES = 21 * 60;
 const DEFAULT_SERVICE_DURATION = 30;
 
 const todayVN = () =>

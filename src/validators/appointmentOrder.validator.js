@@ -12,7 +12,7 @@ const MAX_LIMIT = 100;
 const APPOINTMENT_CODE_REGEX = /^APT-[A-Z0-9]{6}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const CLINIC_OPEN_TIME = '08:00';
-const CLINIC_CLOSE_TIME = '18:00';
+const CLINIC_CLOSE_TIME = '21:00';
 
 const isMongoId = (v) => typeof v === 'string' && /^[0-9a-fA-F]{24}$/.test(v);
 

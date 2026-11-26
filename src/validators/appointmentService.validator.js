@@ -34,8 +34,8 @@ const BOOKING_SERVICE_DEFAULT_ONLY_FIELDS = [
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_REGEX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const CLINIC_OPEN_TIME = '08:00';
-const CLINIC_CLOSE_TIME = '18:00';
-const CLINIC_CLOSE_MINUTES = 18 * 60;
+const CLINIC_CLOSE_TIME = '21:00';
+const CLINIC_CLOSE_MINUTES = 21 * 60;
 const DEFAULT_SERVICE_DURATION = 30;
 const CANCEL_REASON_MAX_LENGTH = 200;
 
@@ -284,7 +284,7 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
 
   // 1. Kiểm tra bản ghi dịch vụ trong lịch hẹn có tồn tại không
   const appointmentService = await AppointmentService.findById(appointmentServiceId)
-    .select('orderId status serviceId')
+    .select('orderId status serviceId scheduledStart')
     .lean();
   if (!appointmentService) {
     throw createError('Không tìm thấy dịch vụ trong lịch hẹn', 404);
@@ -351,7 +351,9 @@ async function validateAssignStaffToService(appointmentServiceId, payload) {
       getShiftFromTime,
       currentTimeVN,
     } = require('../services/staffSchedule.service');
-    const targetShift = getShiftFromTime(order.slotStart || currentTimeVN());
+    const targetShift = getShiftFromTime(
+      appointmentService.scheduledStart || order.slotStart || currentTimeVN()
+    );
     const busyBlock = await findStaffBusyBlock({
       staffId: assignedStaffId,
       date: order.date,

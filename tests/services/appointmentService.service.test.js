@@ -422,7 +422,46 @@ describe('createOnlineBooking', () => {
       });
     });
 
-    it('ném lỗi 400 nếu slotStart nằm ngoài giờ làm việc 08:00 - 18:00', async () => {
+    it('cho phép đặt lịch online vào ca tối (17:00 - 21:00) khi tổng thời lượng không vượt 21:00', async () => {
+      Service.find.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { _id: 'service-1', defaultDuration: 30 },
+            { _id: 'service-2', defaultDuration: 60 },
+          ]),
+        }),
+      });
+      mockLastSequences(null, { sequenceNo: 1 });
+
+      await createOnlineBooking({
+        ...bookingPayload,
+        slotStart: '19:00',
+      });
+
+      expect(createOnlineAppointment).toHaveBeenCalledWith('owner-1', {
+        petId: 'pet-1',
+        date: '2026-11-10',
+        note: 'Ghi chú',
+        slotStart: '19:00',
+        slotEnd: '20:30',
+      });
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(1, {
+        orderId: 'order-1',
+        serviceId: 'service-1',
+        sequenceNo: 1,
+        scheduledStart: '19:00',
+        scheduledEnd: '19:30',
+      });
+      expect(AppointmentService.create).toHaveBeenNthCalledWith(2, {
+        orderId: 'order-1',
+        serviceId: 'service-2',
+        sequenceNo: 2,
+        scheduledStart: '19:30',
+        scheduledEnd: '20:30',
+      });
+    });
+
+    it('ném lỗi 400 nếu slotStart nằm ngoài giờ làm việc 08:00 - 21:00', async () => {
       await expect(
         createOnlineBooking({
           ...bookingPayload,
@@ -430,12 +469,21 @@ describe('createOnlineBooking', () => {
         })
       ).rejects.toMatchObject({
         statusCode: 400,
-        message: 'Giờ hẹn phải nằm trong khung giờ làm việc (08:00 - 18:00)',
+        message: 'Giờ hẹn phải nằm trong khung giờ làm việc (08:00 - 21:00)',
+      });
+      await expect(
+        createOnlineBooking({
+          ...bookingPayload,
+          slotStart: '21:00',
+        })
+      ).rejects.toMatchObject({
+        statusCode: 400,
+        message: 'Giờ hẹn phải nằm trong khung giờ làm việc (08:00 - 21:00)',
       });
       expect(createOnlineAppointment).not.toHaveBeenCalled();
     });
 
-    it('ném lỗi 400 nếu tổng thời lượng dịch vụ vượt quá giờ đóng cửa 18:00', async () => {
+    it('ném lỗi 400 nếu tổng thời lượng dịch vụ vượt quá giờ đóng cửa 21:00', async () => {
       Service.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockResolvedValue([
@@ -448,11 +496,11 @@ describe('createOnlineBooking', () => {
       await expect(
         createOnlineBooking({
           ...bookingPayload,
-          slotStart: '17:00',
+          slotStart: '20:00',
         })
       ).rejects.toMatchObject({
         statusCode: 400,
-        message: 'Tổng thời lượng dịch vụ vượt quá giờ đóng cửa phòng khám (18:00)',
+        message: 'Tổng thời lượng dịch vụ vượt quá giờ đóng cửa phòng khám (21:00)',
       });
       expect(createOnlineAppointment).not.toHaveBeenCalled();
     });
