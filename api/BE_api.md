@@ -566,8 +566,8 @@
   ```
 - **Kết quả mong đợi**:
   - `201 Created`: Tạo đơn hẹn mã `APT-XXXXXX` (`derivedStatus: "Booked"`, `isOnline: true`), tạo danh sách dịch vụ đi kèm (`sequenceNo: 1, 2...`), tự động giữ 1 chuồng phù hợp cân nặng thú cưng theo **đúng ngày hẹn** vào `reservedCageId` (populate kèm `label`, `size`, `maxWeightKg`, `zone`, `isIsolated`, `status` và trả thêm field `cage`) nhưng **chưa đổi** `Cage.status` sang `"Occupied"` để không chặn các ngày khác, đồng thời gửi email thông báo cho các Lễ tân đang `Active`.
-    - Nếu có gửi `slotStart` (ví dụ `"09:00"`, nằm trong giờ làm việc `08:00` – `18:00`): BE tự động cộng nối tiếp thời lượng `defaultDuration` của từng dịch vụ (mặc định 30 phút nếu trống) để tính `scheduledStart`, `scheduledEnd` cho từng dịch vụ và `slotEnd` cho đơn tổng.
-  - `400 Bad Request`: `slotStart` sai định dạng `HH:mm`, nằm ngoài khung giờ `08:00` – `18:00`, ở trong quá khứ (nếu đặt ngày hôm nay), hoặc tổng thời lượng dịch vụ vượt quá giờ đóng cửa `18:00`.
+    - Nếu có gửi `slotStart` (ví dụ `"09:00"` hoặc ca tối `"19:00"`, nằm trong giờ làm việc `08:00` – `21:00`): BE tự động cộng nối tiếp thời lượng `defaultDuration` của từng dịch vụ (mặc định 30 phút nếu trống) để tính `scheduledStart`, `scheduledEnd` cho từng dịch vụ và `slotEnd` cho đơn tổng.
+  - `400 Bad Request`: `slotStart` sai định dạng `HH:mm`, nằm ngoài khung giờ `08:00` – `21:00`, ở trong quá khứ (nếu đặt ngày hôm nay), hoặc tổng thời lượng dịch vụ vượt quá giờ đóng cửa `21:00`.
   - `409 Conflict`: Thú cưng đã có lịch hẹn trong ngày đã chọn, hoặc hết chuồng phù hợp cân nặng trống trong ngày đó.
 
 *(Lưu ý: Nếu muốn tách rời 2 bước thì gọi `POST /api/appointment-orders/online` tạo đơn trước, sau đó gọi `POST /api/appointment-services/online` để thêm từng dịch vụ).*
